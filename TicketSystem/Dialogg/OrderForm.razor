@@ -1,0 +1,395 @@
+﻿@* ===== OrderForm مع دعم الطلب الخارجي ===== *@
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@using Radzen
+@using Radzen.Blazor
+@using TicketSystem.Data
+@using TicketSystem.Services
+@using TicketSystem.Services.WPX
+@using TicketSystem.TSModel
+
+@inject OrderService OrderService
+@inject DialogService DialogService
+@inject OrderFixedService OrderFixedService
+@inject SectionService SectionService
+@inject UserManager<ApplicationUser> UserManager
+@inject IDbContextFactory<ApplicationDbContext> ContextFactory
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IWebHostEnvironment Env
+
+<EditForm Model="@order" OnValidSubmit="@HandleValidSubmit">
+    <DataAnnotationsValidator />
+    <ValidationSummary />
+
+    <RadzenCard Style="padding: 30px; border-radius: 15px; box-shadow: 0 0 10px rgba(0,0,0,0.1)">
+        <div class="d-flex align-items-center mb-4">
+            <RadzenLabel Text="نوع الطلب" Style="margin-right: 10px;" />
+            <RadzenSwitch @bind-Value="isExternal" Style="margin-right: 10px;" />
+            <span>@(isExternal ? "خارجي" : "داخلي")</span>
+        </div>
+
+        <h3 class="mb-4 text-primary border-bottom pb-2">بيانات الطلب</h3>
+
+        <div class="row">
+            <div class="col-md-6 mb-3">
+                <RadzenLabel Text="من قسم" />
+                <RadzenDropDown @bind-Value="order.SectionId"
+                                Data="@sectionList"
+                                TextProperty="Name"
+                                ValueProperty="Id"
+                                Name="SectionId"
+                                Style="width:100%" />
+                <ValidationMessage For="@(() => order.SectionId)" />
+            </div>
+
+            <div class="col-md-6 mb-3">
+                <RadzenLabel Text="عامل التكرار" />
+                <RadzenNumeric @bind-Value="order.RepeateFactor"
+                               Name="RepeateFactor"
+                               Placeholder="أدخل عامل التكرار"
+                               Style="width:100%" />
+                <ValidationMessage For="@(() => order.RepeateFactor)" />
+            </div>
+
+            <div class="col-md-12 mb-3">
+                <RadzenLabel Text="الخدمة" />
+                <RadzenDropDownDataGrid @bind-Value="order.FixedId"
+                                        Data="@orderFixedList"
+                                        TextProperty="DisplayText"
+                                        ValueProperty="Id"
+                                        AllowColumnResize="true"
+                                        AllowFilteringByAllStringColumns="true"
+                                        Change="OnServiceChanged"
+                                        Style="width:100%">
+                    <Columns>
+                        <RadzenDropDownDataGridColumn Property="Level1" Title="Level1" />
+                        <RadzenDropDownDataGridColumn Property="Level2" Title="Level2" />
+                        <RadzenDropDownDataGridColumn Property="Level3" Title="Level3" />
+                        <RadzenDropDownDataGridColumn Property="Level4" Title="Level4" />
+                    </Columns>
+                </RadzenDropDownDataGrid>
+                <ValidationMessage For="@(() => order.FixedId)" />
+            </div>
+
+            @if (serviceRates?.Any() == true)
+            {
+                <div class="col-md-12 mb-3 mt-2">
+                    <h6 class="text-primary">النقاط الخاصة بالأقسام لهذه الخدمة</h6>
+                    <RadzenDataGrid Data="@serviceRates" TItem="Rate" ShowPagingSummary="false" AllowPaging="false" AllowSorting="false" Class="mt-2">
+                        <Columns>
+                            <RadzenDataGridColumn TItem="Rate" Property="FromDepartment" Title="القسم" />
+               
+                            <!-- عمود حاصل الضرب -->
+                            <RadzenDataGridColumn TItem="Rate" Title="النقاط">
+                                <Template Context="rate">
+                                    @(rate.RateValue * rate.TimeMinute)
+                                </Template>
+                            </RadzenDataGridColumn>
+                        </Columns>
+                    </RadzenDataGrid>
+
+                </div>
+            }
+
+            @if (isExternal)
+            {
+                <div class="row mb-3">
+                    <div class="col-md-4 mb-3">
+                        <RadzenLabel Text="الرقم القومي" />
+                        <RadzenTextBox @bind-Value="externalOrder.Nid" Name="Nid" Style="width:100%" />
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <RadzenLabel Text="الاسم بالكامل" />
+                        <RadzenTextBox @bind-Value="externalOrder.Name" Name="Name" Style="width:100%" />
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <RadzenLabel Text="رقم الهاتف" />
+                        <RadzenTextBox @bind-Value="externalOrder.Phone" Name="Phone" Style="width:100%" />
+                    </div>
+                </div>
+            }
+
+            <div class="col-md-6 mb-3">
+                <RadzenLabel Text="بواسطة" />
+                <RadzenTextBox @bind-Value="order.CreatedBy"
+                               Name="CreatedBy"
+                               Disabled="true"
+                               Style="width:100%" />
+            </div>
+
+            <div class="col-md-6 mb-3">
+                <RadzenLabel Text="تاريخ الإنشاء" />
+                <RadzenTextBox Value="@(order.DateTime?.ToString("yyyy/MM/dd HH:mm"))"
+                               ReadOnly="true"
+                               Disabled="true"
+                               Style="width:100%" />
+            </div>
+        </div>
+
+        <fieldset class="mt-4 border rounded p-3">
+            <legend class="text-primary px-2">تفاصيل الطلب</legend>
+
+            <RadzenButton Icon="add_circle" Text="إضافة تفصيلة"
+                          Click="@AddDetail"
+                          Disabled="@isDetailAdded"
+                          ButtonStyle="ButtonStyle.Primary"
+                          Style="margin-bottom:10px" />
+
+            <RadzenDataGrid @ref="detailGrid"
+                            TItem="OrderDetail"
+                            Data="@order.OrderDetails"
+                            AllowPaging="true"
+                            PageSize="5"
+                            Class="mt-2">
+                <Columns>
+                    <RadzenDataGridColumn TItem="OrderDetail" Property="FromDep" Title="من قسم" />
+                    <RadzenDataGridColumn TItem="OrderDetail" Property="ToDepartment" Title="إلى قسم" />
+                    <RadzenDataGridColumn TItem="OrderDetail" Property="Amount" Title="المبلغ" />
+                    <RadzenDataGridColumn TItem="OrderDetail" Property="Notes" Title="ملاحظات" />
+                    <RadzenDataGridColumn TItem="OrderDetail" Title="يحتاج موافقة">
+                        <Template Context="detail">
+                            @(detail.NeedApproval ? "نعم" : "لا")
+                        </Template>
+                    </RadzenDataGridColumn>
+                    <RadzenDataGridColumn TItem="OrderDetail" Title="العمليات">
+                        <Template Context="detail">
+                            <RadzenButton Icon="delete" Size="ButtonSize.Small" ButtonStyle="ButtonStyle.Danger"
+                                          Click="@(args => RemoveDetail(detail))" />
+                            <RadzenButton Icon="edit" Size="ButtonSize.Small" ButtonStyle="ButtonStyle.Success"
+                                          Click="@(args => EditDetail(detail))" Class="ms-1" />
+                        </Template>
+                    </RadzenDataGridColumn>
+                </Columns>
+            </RadzenDataGrid>
+
+            @if (order.OrderDetails?.Sum(d => d.Amount) > 0)
+            {
+                <div class="mt-2 text-end fw-bold text-primary">
+                    المجموع: @order.OrderDetails.Sum(d => d.Amount) جنيه
+                </div>
+            }
+        </fieldset>
+
+        <div class="d-flex justify-content-end mt-4">
+            <RadzenButton ButtonType="ButtonType.Submit" Icon="save" Text="حفظ"
+                          ButtonStyle="ButtonStyle.Success" Disabled="@isSaving" />
+            <RadzenButton Text="إلغاء" Click="@Cancel"
+                          ButtonStyle="ButtonStyle.Light" Class="ms-2" Disabled="@isSaving" />
+        </div>
+    </RadzenCard>
+</EditForm>
+
+@if (isSaving)
+{
+    <RadzenProgressBar Mode="ProgressBarMode.Indeterminate" Style="margin-top:20px" />
+}
+
+@code {
+    [Parameter] public int OrderId { get; set; }
+
+    List<Section> sectionList = new();
+    List<OrderFixed> orderFixedList = new();
+    private Order order = new() { RepeateFactor = 1 };
+    private bool isSaving = false;
+    private bool switchValue;
+    private bool isDetailAdded = false;
+    private RadzenDataGrid<OrderDetail> detailGrid;
+
+    // نوع الطلب
+    private bool isExternal = false;
+
+    // بيانات الطلب الخارجي
+    private OrderDetailOut externalOrder = new OrderDetailOut();
+
+
+        [Inject] private RateService RateService { get; set; }
+
+        private List<Rate> serviceRates = new();
+
+        private async Task OnServiceChanged(object value)
+        {
+            if (value is int fixedId && fixedId > 0)
+            {
+                serviceRates = (await RateService.GetAllAsync())
+                    .Where(r => r.OrderFixedId == fixedId)
+                    .ToList();
+            }
+            else
+            {
+                serviceRates = new();
+            }
+
+            StateHasChanged();
+        }
+    
+
+
+
+
+    protected override async Task OnInitializedAsync()
+    {
+        orderFixedList = await OrderFixedService.GetAllAsync();
+
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = await UserManager.GetUserAsync(authState.User);
+
+        if (user == null)
+        {
+            await DialogService.Alert("لم يتم العثور على المستخدم الحالي.", "خطأ");
+            return;
+        }
+
+        sectionList = await SectionService.GetSectionsForUserAsync(user.Id);
+
+        if (OrderId != 0)
+        {
+            var dbOrder = await OrderService.GetByIdAsync(OrderId);
+            if (dbOrder != null)
+            {
+                order = dbOrder;
+                switchValue = order.Closed ?? false;
+            }
+        }
+        else
+        {
+            var sectionId = sectionList.Select(x => (int?)x.Id).FirstOrDefault();
+
+            if (sectionId == null || sectionId == 0)
+            {
+                await DialogService.Alert("المستخدم الحالي غير مرتبط بأي قسم صالح. لا يمكن إنشاء الطلب.", "خطأ");
+                return;
+            }
+
+            order = new Order
+                {
+                    SectionId = sectionId.Value,
+                    PcName = Environment.MachineName,
+                    CreatedBy = user.UserName,
+                    DateTime = DateTime.Now,
+                    Closed = false,
+                    RepeateFactor = 1,
+                    OrderDetails = new List<OrderDetail>()
+                };
+        }
+    }
+
+    private async Task AddDetail()
+    {
+        var result = await DialogService.OpenAsync<OrderDetailForOrder>(
+            "إضافة تفصيلة",
+            new Dictionary<string, object>
+                {
+                    ["detail"] = new OrderDetail
+                    {
+                        OrderId = order.Id,
+                        CreatedBy = order.CreatedBy,
+                        CreationDate = DateTime.Now,
+                        PcName = order.PcName,
+                        FromDep = sectionList.FirstOrDefault(s => s.Id == order.SectionId)?.Name
+                    },
+                    ["sectionId"] = order.SectionId
+                });
+
+        if (result is OrderDetail newDetail)
+        {
+            order.OrderDetails ??= new List<OrderDetail>();
+            order.OrderDetails.Add(newDetail);
+            order.LastDepartment = newDetail.ToDepartment;
+            isDetailAdded = true;
+            await detailGrid.Reload();
+            StateHasChanged();
+        }
+    }
+
+    private async Task EditDetail(OrderDetail selectedDetail)
+    {
+        var result = await DialogService.OpenAsync<OrderDetailForOrder>(
+            "تعديل التفصيلة",
+            new Dictionary<string, object>
+                {
+                    ["detail"] = selectedDetail,
+                    ["IsEdit"] = true
+                });
+
+        if (result is OrderDetail)
+        {
+            if (order.OrderDetails.Any())
+                order.LastDepartment = order.OrderDetails.Last().ToDepartment;
+
+            StateHasChanged();
+        }
+    }
+
+    private async void RemoveDetail(OrderDetail detail)
+    {
+        foreach (var file in detail.Attachment?.Split(',') ?? Enumerable.Empty<string>())
+        {
+            var path = Path.Combine(Env.WebRootPath, "uploads", file);
+            if (File.Exists(path)) File.Delete(path);
+        }
+
+        order.OrderDetails.Remove(detail);
+
+        if (order.OrderDetails.Any())
+            order.LastDepartment = order.OrderDetails.Last().ToDepartment;
+        else
+            order.LastDepartment = null;
+
+        isDetailAdded = false;
+        await detailGrid.Reload();
+        StateHasChanged();
+    }
+
+    private void OnSwitchChanged(bool value) => order.Closed = value;
+
+    private async Task HandleValidSubmit()
+    {
+        isSaving = true;
+        StateHasChanged();
+
+        try
+        {
+            if (order.FixedId == null || !orderFixedList.Any(x => x.Id == order.FixedId))
+            {
+                await DialogService.Alert("يجب اختيار خدمة صالحة من القائمة.", "خطأ");
+                isSaving = false;
+                return;
+            }
+
+            if (order.OrderDetails == null || !order.OrderDetails.Any())
+            {
+                await DialogService.Alert("يجب إدخال تفصيلة واحدة على الأقل.", "تحذير");
+                isSaving = false;
+                return;
+            }
+
+            if (isExternal)
+            {
+                if (string.IsNullOrWhiteSpace(externalOrder.Nid) ||
+                    string.IsNullOrWhiteSpace(externalOrder.Name) ||
+                    string.IsNullOrWhiteSpace(externalOrder.Phone))
+                {
+                    await DialogService.Alert("يرجى ملء جميع بيانات الطلب الخارجي.", "خطأ");
+                    isSaving = false;
+                    return;
+                }
+
+                await OrderService.AddAsync(order, externalOrder);
+            }
+            else
+            {
+                await OrderService.AddAsync(order);
+            }
+
+            DialogService.Close(true);
+        }
+        catch (Exception ex)
+        {
+            isSaving = false;
+            await DialogService.Alert($"حدث خطأ: {ex.InnerException?.Message ?? ex.Message}", "خطأ في الحفظ");
+        }
+    }
+    private void Cancel() => DialogService.Close(false);
+}

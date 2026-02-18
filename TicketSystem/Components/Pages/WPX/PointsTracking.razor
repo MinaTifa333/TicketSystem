@@ -1,0 +1,433 @@
+﻿@page "/points-tracking"
+@using TicketSystem.Services.WPX
+@using Radzen
+@using Radzen.Blazor
+@using System.Security.Claims
+@inject RawDataService RawDataService
+@inject IJSRuntime JS
+@inject RoleService RoleService
+@inject AuthenticationStateProvider AuthProvider
+@rendermode InteractiveServer
+@using QuestPDF.Fluent
+@using QuestPDF.Helpers
+@using QuestPDF.Infrastructure
+
+<h4 class="mt-4">📊 تقارير النقاط</h4>
+
+@if (!CanView)
+{
+    <div class="alert alert-danger">ليس لديك صلاحية عرض هذا التقرير.</div>
+}
+else
+{
+    <!-- ===== فلترة البحث ===== -->
+    <div class="mb-3 row">
+        <div class="col-md-3">
+            <input class="form-control" placeholder="بحث بالقسم..." @bind="filterSection" @bind:event="oninput" />
+        </div>
+        <div class="col-md-3">
+            <select class="form-control" @bind="filterPeriod">
+                <option value="all">الكل</option>
+                <option value="today">اليوم</option>
+                <option value="last30">آخر 30 يوم</option>
+                <option value="month">شهر محدد</option>
+                <option value="year">السنة الحالية</option>
+                <option value="custom">تاريخ مخصص</option>
+            </select>
+        </div>
+        @if (filterPeriod == "month")
+        {
+            <div class="col-md-3">
+                <input type="month" class="form-control" @bind="filterMonth" />
+            </div>
+        }
+        else if (filterPeriod == "custom")
+        {
+            <div class="col-md-3">
+                <input type="date" class="form-control" @bind="filterStartDate" />
+            </div>
+            <div class="col-md-3">
+                <input type="date" class="form-control" @bind="filterEndDate" />
+            </div>
+        }
+        <div class="col-md-3">
+            <button class="btn btn-primary w-100" @onclick="ApplyFilters">بحث</button>
+        </div>
+    </div>
+
+    <!-- ===== زر تصدير Excel ===== -->
+    <div class="mb-3">
+        <button class="btn btn-success" @onclick="ExportToExcel">💾 تصدير Excel</button>
+        <button class="btn btn-danger" @onclick="ExportMonthlyReport">📑 تصدير التقرير الشهري PDF</button>
+    </div>
+
+    <!-- ===== إحصائيات عامة ===== -->
+    @if (summaries != null && summaries.Any())
+    {
+        <div class="alert alert-info">
+            <b>عدد الأقسام:</b> @summaries.Count |
+            <b>إجمالي النقاط:</b> @summaries.Sum(x => x.TotalPoints) |
+            <b>أعلى قسم:</b>
+            @(summaries.Any()
+                ? summaries.OrderByDescending(x => x.TotalPoints).First().SectionName + " (" + summaries.Max(x => x.TotalPoints).ToString() + ")"
+                : "-") |
+
+            <b>أقل قسم:</b>
+            @(summaries.Any()
+                ? summaries.OrderBy(x => x.TotalPoints).First().SectionName + " (" + summaries.Min(x => x.TotalPoints).ToString() + ")"
+                : "-")
+        </div>
+    }
+
+    <!-- ===== إحصائيات الأقسام ===== -->
+    @if (summaries != null && summaries.Any())
+    {
+        <h5 class="mt-4">📌 إحصائيات الأقسام</h5>
+        <RadzenDataGrid Data="@summaries" TItem="PointsSummary" ColumnWidth="200px" ShowPagingSummary="true" AllowPaging="true" PageSize="10">
+            <Columns>
+                <RadzenDataGridColumn TItem="PointsSummary" Property="SectionName" Title="القسم" />
+                <RadzenDataGridColumn TItem="PointsSummary" Property="OrdersCount" Title="عدد الطلبات" />
+                <RadzenDataGridColumn TItem="PointsSummary" Property="TotalPoints" Title="مجموع النقاط" />
+            </Columns>
+        </RadzenDataGrid>
+    }
+
+    <!-- ===== تفاصيل النقاط ===== -->
+    @if (details == null)
+    {
+        <p>جاري التحميل...</p>
+    }
+    else if (!details.Any())
+    {
+        <p>لا توجد تفاصيل نقاط.</p>
+    }
+    else
+    {
+        <h5 class="mt-4">📝 تفاصيل النقاط</h5>
+
+        <RadzenDataGrid Data="@details" TItem="RawsData"
+                        AllowPaging="true" PageSize="15"
+                        AllowSorting="true" AllowFiltering="true"
+                        FilterMode="FilterMode.Advanced"
+                        ColumnWidth="200px"
+                        ShowPagingSummary="true">
+            <Columns>
+                <RadzenDataGridColumn TItem="RawsData" Property="OrderId" Title="رقم الطلب" />
+                <RadzenDataGridColumn TItem="RawsData" Property="FromDepartmentRate" Title="القسم" />
+                <RadzenDataGridColumn TItem="RawsData" Property="TotalRate" Title="النقاط" />
+                <RadzenDataGridColumn TItem="RawsData" Property="DateTimeStart" Title="بداية" FormatString="{0:yyyy-MM-dd HH:mm}" />
+                <RadzenDataGridColumn TItem="RawsData" Property="DateTimeClosed" Title="إغلاق" FormatString="{0:yyyy-MM-dd HH:mm}" />
+            </Columns>
+        </RadzenDataGrid>
+    }
+}
+
+
+
+@code {
+    private List<PointsSummary> summaries = new();
+    private List<RawsData> allDetails = new();
+    private List<RawsData> details = new();
+
+    private string filterSection = string.Empty;
+    private string filterPeriod = "all";
+    private DateTime? filterStartDate;
+    private DateTime? filterEndDate;
+    private DateTime? filterMonth;
+
+    private Dictionary<string, bool> UserPermissions = new();
+    private bool CanView => UserPermissions.ContainsKey("Permissions.Points.View");
+    private bool CanExport => UserPermissions.ContainsKey("Permissions.Points.Export");
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+
+        var roleName = user.Claims.FirstOrDefault(c => c.Type == ClaimTypes.Role)?.Value;
+        if (!string.IsNullOrEmpty(roleName))
+        {
+            var perms = await RoleService.GetPermissionsByRoleAsync(roleName);
+            UserPermissions = perms.ToDictionary(p => p, p => true);
+        }
+
+        if (CanView)
+        {
+            summaries = await RawDataService.GetPointsBySectionAsync();
+            allDetails = await RawDataService.GetAllRawDataAsync();
+            details = allDetails;
+        }
+    }
+
+    private void ApplyFilters()
+    {
+        if (!CanView) return;
+
+        IEnumerable<RawsData> query = allDetails;
+
+        if (!string.IsNullOrWhiteSpace(filterSection))
+            query = query.Where(x => x.FromDepartmentRate.Contains(filterSection, StringComparison.OrdinalIgnoreCase));
+
+        DateTime now = DateTime.Now;
+        if (filterPeriod == "today")
+            query = query.Where(x => x.DateTimeStart.Date == now.Date);
+        else if (filterPeriod == "last30")
+            query = query.Where(x => x.DateTimeStart >= now.AddDays(-30));
+        else if (filterPeriod == "month" && filterMonth.HasValue)
+            query = query.Where(x => x.DateTimeStart.Month == filterMonth.Value.Month && x.DateTimeStart.Year == filterMonth.Value.Year);
+        else if (filterPeriod == "year")
+            query = query.Where(x => x.DateTimeStart.Year == now.Year);
+        else if (filterPeriod == "custom" && filterStartDate.HasValue && filterEndDate.HasValue)
+            query = query.Where(x => x.DateTimeStart >= filterStartDate.Value && x.DateTimeClosed <= filterEndDate.Value);
+
+        details = query.ToList();
+
+        summaries = details
+            .GroupBy(r => r.FromDepartmentRate)
+            .Select(g => new PointsSummary
+                {
+                    SectionName = g.Key,
+                    TotalPoints = g.Sum(x => x.TotalRate),
+                    OrdersCount = g.Select(x => x.OrderId).Distinct().Count()
+                })
+            .OrderByDescending(x => x.TotalPoints)
+            .ToList();
+    }
+
+
+
+    private async Task ExportToExcel()
+    {
+        if (!CanExport)
+        {
+            await JS.InvokeVoidAsync("alert", "ليس لديك صلاحية تصدير التقرير!");
+            return;
+        }
+        using var package = new OfficeOpenXml.ExcelPackage();
+        var ws = package.Workbook.Worksheets.Add("Points");
+
+        ws.View.RightToLeft = true;
+        int rowIndex = 1;
+
+        // 🎯 عنوان رئيسي للتقرير
+        ws.Cells[rowIndex, 1].Value = "تقرير النقاط";
+        ws.Cells[rowIndex, 1, rowIndex, 5].Merge = true;
+        ws.Cells[rowIndex, 1, rowIndex, 5].Style.Font.Bold = true;
+        ws.Cells[rowIndex, 1, rowIndex, 5].Style.Font.Size = 22;
+        ws.Cells[rowIndex, 1, rowIndex, 5].Style.HorizontalAlignment = OfficeOpenXml.Style.ExcelHorizontalAlignment.Center;
+        ws.Cells[rowIndex, 1, rowIndex, 5].Style.Fill.PatternType = OfficeOpenXml.Style.ExcelFillStyle.Solid;
+        ws.Cells[rowIndex, 1, rowIndex, 5].Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.FromArgb(0, 102, 204)); // أزرق غامق
+        ws.Cells[rowIndex, 1, rowIndex, 5].Style.Font.Color.SetColor(System.Drawing.Color.White);
+        rowIndex += 2;
+
+        // 📊 إحصائيات عامة (في صندوق ملون)
+        ws.Cells[rowIndex, 1].Value = $"عدد الأقسام: {summaries.Count}";
+        ws.Cells[rowIndex + 1, 1].Value = $"إجمالي النقاط: {summaries.Sum(x => x.TotalPoints)}";
+        ws.Cells[rowIndex + 2, 1].Value = $"أعلى قسم: {summaries.OrderByDescending(x => x.TotalPoints).FirstOrDefault()?.SectionName}";
+        ws.Cells[rowIndex + 3, 1].Value = $"أقل قسم: {summaries.OrderBy(x => x.TotalPoints).FirstOrDefault()?.SectionName}";
+
+        using (var range = ws.Cells[rowIndex, 1, rowIndex + 5, 5])
+        {
+            range.Style.Fill.PatternType = OfficeOpenXml.Style.ExcelFillStyle.Solid;
+            range.Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.FromArgb(230, 240, 255));
+            range.Style.Font.Size = 12;
+            range.Style.Border.BorderAround(OfficeOpenXml.Style.ExcelBorderStyle.Medium, System.Drawing.Color.Gray);
+        }
+        rowIndex += 6;
+
+        // 📑 جدول الإحصائيات
+        ws.Cells[rowIndex, 1].Value = "القسم";
+        ws.Cells[rowIndex, 2].Value = "عدد الطلبات";
+        ws.Cells[rowIndex, 3].Value = "مجموع النقاط";
+
+        using (var range = ws.Cells[rowIndex, 1, rowIndex, 5])
+        {
+            range.Style.Font.Bold = true;
+            range.Style.Fill.PatternType = OfficeOpenXml.Style.ExcelFillStyle.Solid;
+            range.Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.FromArgb(0, 153, 153)); // أخضر مزرق
+            range.Style.Font.Color.SetColor(System.Drawing.Color.White);
+            range.Style.HorizontalAlignment = OfficeOpenXml.Style.ExcelHorizontalAlignment.Center;
+        }
+        rowIndex++;
+
+        int statStartRow = rowIndex;
+        foreach (var s in summaries)
+        {
+            ws.Cells[rowIndex, 1].Value = s.SectionName;
+            ws.Cells[rowIndex, 2].Value = s.OrdersCount;
+            ws.Cells[rowIndex, 3].Value = s.TotalPoints;
+
+            // صفوف متناوبة
+            if ((rowIndex - statStartRow) % 2 == 0)
+            {
+                using (var range = ws.Cells[rowIndex, 1, rowIndex, 3])
+                {
+                    range.Style.Fill.PatternType = OfficeOpenXml.Style.ExcelFillStyle.Solid;
+                    range.Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.FromArgb(242, 242, 242)); // رمادي فاتح
+                }
+            }
+
+            rowIndex++;
+        }
+        rowIndex += 3;
+
+        // 📝 جدول التفاصيل
+        ws.Cells[rowIndex, 1].Value = "رقم الطلب";
+        ws.Cells[rowIndex, 2].Value = "القسم";
+        ws.Cells[rowIndex, 3].Value = "النقاط";
+        ws.Cells[rowIndex, 4].Value = "بداية";
+        ws.Cells[rowIndex, 5].Value = "إغلاق";
+
+        using (var range = ws.Cells[rowIndex, 1, rowIndex, 5])
+        {
+            range.Style.Font.Bold = true;
+            range.Style.Fill.PatternType = OfficeOpenXml.Style.ExcelFillStyle.Solid;
+            range.Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.FromArgb(128, 128, 192)); // بنفسجي فاتح
+            range.Style.Font.Color.SetColor(System.Drawing.Color.White);
+            range.Style.HorizontalAlignment = OfficeOpenXml.Style.ExcelHorizontalAlignment.Center;
+        }
+        rowIndex++;
+
+        int detailStartRow = rowIndex;
+        foreach (var d in details)
+        {
+            ws.Cells[rowIndex, 1].Value = d.OrderId;
+            ws.Cells[rowIndex, 2].Value = d.FromDepartmentRate;
+            ws.Cells[rowIndex, 3].Value = d.TotalRate;
+            ws.Cells[rowIndex, 4].Value = d.DateTimeStart;
+            ws.Cells[rowIndex, 4].Style.Numberformat.Format = "yyyy-mm-dd hh:mm";
+            ws.Cells[rowIndex, 5].Value = d.DateTimeClosed;
+            ws.Cells[rowIndex, 5].Style.Numberformat.Format = "yyyy-mm-dd hh:mm";
+
+            // حدود + صفوف متناوبة
+            using (var range = ws.Cells[rowIndex, 1, rowIndex, 5])
+            {
+                range.Style.Border.Top.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
+                range.Style.Border.Bottom.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
+                range.Style.Border.Left.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
+                range.Style.Border.Right.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
+
+                if ((rowIndex - detailStartRow) % 2 == 0)
+                {
+                    range.Style.Fill.PatternType = OfficeOpenXml.Style.ExcelFillStyle.Solid;
+                    range.Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.FromArgb(250, 250, 250));
+                }
+            }
+
+            rowIndex++;
+        }
+
+        // ⚡ تحسين العرض
+        ws.Cells[ws.Dimension.Address].AutoFitColumns();
+
+        // 📥 تحميل الملف
+        var bytes = package.GetAsByteArray();
+        await JS.InvokeVoidAsync("saveAsFile", "PointsReport.xlsx", Convert.ToBase64String(bytes));
+    }
+
+    private async Task ExportMonthlyReport()
+    {
+        if (!CanExport)
+        {
+            await JS.InvokeVoidAsync("alert", "ليس لديك صلاحية تصدير التقرير!");
+            return;
+        }
+        var month = DateTime.Now.AddMonths(-1);
+        var lastDay = new DateTime(month.Year, month.Month, DateTime.DaysInMonth(month.Year, month.Month));
+        var indicator = summaries.Sum(x => x.TotalPoints);
+
+        var doc = Document.Create(container =>
+        {
+            container.Page(page =>
+            {
+                page.Margin(50);
+
+                // ===== العنوان =====
+                page.Header()
+                    .AlignCenter()
+                    .Text("التقرير الشهري WPX")
+                    .FontSize(22)
+                    .Bold();
+
+                // ===== المحتوى =====
+                page.Content().Column(col =>
+                {
+                    col.Spacing(15);
+
+                    // النصوص
+                    col.Item().Text("السيد الأستاذ/ كيرلس دميان مدير عام الديوان البطريركي").AlignRight();
+                    col.Item().Text("مقدم لسيادتكم التقرير الشهري موضح به اقفال اليوم الأخير من الشهر الماضي من برنامج الـ WPX.").AlignRight();
+                    col.Item().Text($"مرفق ب Excel Sheet موضحاً الأرقام المذكورة وقيمة المؤشر ليوم {lastDay:dd MMMM yyyy} وهو {indicator:N1}.").AlignRight();
+                    col.Item().Text("ولكم جزيل الشكر.......").AlignRight();
+
+                    col.Item().Text("رئيس قسم تكنولوجيا المعلومات").AlignLeft();
+                    col.Item().Text(".............................................").AlignLeft();
+
+                    // ===== الجدول =====
+                    col.Item().Table(table =>
+                    {
+                        table.ColumnsDefinition(cols =>
+                        {
+                            cols.RelativeColumn();   // اسم القسم
+                            cols.ConstantColumn(100); // الإجمالي
+                        });
+
+                        // رأس الجدول
+                        table.Header(header =>
+                        {
+                            header.Cell().Element(CellStyle).Text("الأقسام").Bold();
+                            header.Cell().Element(CellStyle).Text("الإجمالي").Bold();
+                        });
+
+                        // البيانات
+                        foreach (var s in summaries)
+                        {
+                            table.Cell().Element(CellStyle).Text(s.SectionName);
+                            table.Cell().Element(CellStyle).Text(s.TotalPoints.ToString("N0"));
+                        }
+
+                        // صف الإجمالي
+                        table.Footer(footer =>
+                        {
+                            footer.Cell().Element(CellStyle).Text("الإجمالي").Bold();
+                            footer.Cell().Element(CellStyle).Text(summaries.Sum(x => x.TotalPoints).ToString("N0")).Bold();
+                        });
+                    });
+                });
+            });
+        });
+
+        // تحويل PDF إلى بايتات
+        byte[] pdfBytes = doc.GeneratePdf();
+
+        // إرسال الملف للتحميل في المتصفح
+        await JS.InvokeVoidAsync("saveAsFile", "MonthlyReport.pdf", Convert.ToBase64String(pdfBytes));
+    }
+
+    // تنسيق خلايا الجدول
+    static IContainer CellStyle(IContainer container) =>
+        container
+            .Padding(5)
+            .BorderBottom(1)
+            .BorderColor(QuestPDF.Helpers.Colors.Grey.Lighten2)
+            .AlignRight(); // محاذاة النصوص لليمين
+
+    // أسلوب تنسيق خلايا الجدول
+
+
+
+}
+
+
+<script>
+    function saveAsFile(filename, bytesBase64) {
+        const link = document.createElement('a');
+        link.download = filename;
+        link.href = "data:application/octet-stream;base64," + bytesBase64;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+</script>
+
+

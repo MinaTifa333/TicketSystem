@@ -1,0 +1,38 @@
+﻿@using Radzen
+@using Radzen.Blazor
+@using TicketSystem.TSModel
+@inject DialogService DialogService
+
+@if (Attachments?.Any() == true)
+{
+    <RadzenCard>
+        <h5 class="mb-3">المرفقات:</h5>
+        @foreach (var file in Attachments)
+        {
+            <p>
+                <a href="@($"/uploads/{file}")" target="_blank">@file</a>
+            </p>
+        }
+
+        <div class="text-center mt-4">
+            <RadzenButton Text="إغلاق" Click="@(() => DialogService.Close())" />
+        </div>
+    </RadzenCard>
+}
+else
+{
+    <RadzenAlert Text="لا توجد مرفقات لهذا الطلب" Severity="AlertSeverity.Info" />
+}
+
+@code {
+    [Parameter] public string? AttachmentString { get; set; }
+    private List<string> Attachments = new();
+
+    protected override void OnInitialized()
+    {
+        if (!string.IsNullOrWhiteSpace(AttachmentString))
+        {
+            Attachments = AttachmentString.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList();
+        }
+    }
+}

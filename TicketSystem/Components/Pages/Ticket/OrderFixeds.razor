@@ -1,0 +1,338 @@
+﻿@page "/orderfixed"
+@using TicketSystem.Dialogg
+@using TicketSystem.TSModel
+@inject OrderFixedService Service
+@inject SectionService SectionService
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject DialogService DialogService
+@inject NotificationService NotificationService
+@inject RoleService RoleService
+@inject NavigationManager NavigationManager
+
+@rendermode InteractiveServer
+
+<h3 class="mb-4 fw-bold text-primary">
+    <i class="bi bi-tools me-2"></i> إدارة الخدمات 
+</h3>
+
+@if (!CanView)
+{
+    <div class="alert alert-danger mt-3">
+        <i class="bi bi-exclamation-triangle me-2"></i> ليس لديك صلاحية عرض هذه الصفحة.
+    </div>
+}
+else
+{
+    <div class="d-flex align-items-center mb-3 gap-3 flex-wrap">
+        @if (CanAdd)
+        {
+            <RadzenButton Icon="add_circle_outline" Text="إضافة جديد" ButtonStyle="ButtonStyle.Primary" Click="@ShowCreateDialog" />
+        }
+
+        <RadzenTextBox Value="@searchTerm"
+                       Placeholder="🔍 ابحث عن الخدمة أو القسم..."
+                       Style="width: 250px; direction: rtl;"
+                       @oninput="OnInputHandler" />
+
+        <RadzenDropDown @bind-Value="selectedSection"
+                        Data="@sections"
+                        TextProperty="Name"
+                        ValueProperty="Name"
+                        Placeholder="تصفية حسب القسم"
+                        Style="width: 200px;"
+                        Change="@(_ => grid?.Reload())" />
+
+        <RadzenButton Text="مسح" ButtonStyle="ButtonStyle.Secondary" Click="@ClearSearch" Icon="close" />
+    </div>
+
+    @if (orderFixedList == null)
+    {
+        <div class="text-center mt-5">
+            <RadzenProgressBar Mode="ProgressBarMode.Indeterminate" />
+            <p class="mt-2">جارٍ تحميل البيانات...</p>
+        </div>
+    }
+    else
+    {
+        @if (!FilteredList.Any())
+        {
+            <div class="alert alert-warning mt-3">
+                <i class="bi bi-exclamation-triangle me-2"></i> لا توجد نتائج مطابقة.
+            </div>
+        }
+
+        <div style="overflow-x: auto;">
+            <RadzenDataGrid @ref="grid" @key="FilteredList.Count()" Data="@FilteredList" TItem="OrderFixed"
+                            AllowColumnResize="true" AllowSorting="true" AllowPaging="true"
+                            PageSize="10" FilterCaseSensitivity="FilterCaseSensitivity.CaseInsensitive"
+                            FilterMode="FilterMode.Simple" Responsive="true" ShowPagingSummary="true"
+                            SortMode="SortMode.Single" RowHover="true"
+                            Style="min-width: 2000px;">
+                <Columns>
+                    <RadzenDataGridColumn TItem="OrderFixed" Width="70px" Title="#">
+                        <Template Context="item">@item.Id</Template>
+                    </RadzenDataGridColumn>
+                    <RadzenDataGridColumn TItem="OrderFixed" Width="60px" Title="النوع">
+                        <Template Context="item">@item.Types</Template>
+                    </RadzenDataGridColumn>
+                    <RadzenDataGridColumn TItem="OrderFixed" Title="القسم">
+                        <Template Context="item">@sections.FirstOrDefault(s => s.Name == item.Level1)?.Name</Template>
+                    </RadzenDataGridColumn>
+                    <RadzenDataGridColumn TItem="OrderFixed" Title="الخدمة">
+                        <Template Context="item">@item.Level2</Template>
+                    </RadzenDataGridColumn>
+                    <RadzenDataGridColumn TItem="OrderFixed" Title="الخدمة 2">
+                        <Template Context="item">@item.Level3</Template>
+                    </RadzenDataGridColumn>
+                    <RadzenDataGridColumn TItem="OrderFixed" Title="الخدمة 3">
+                        <Template Context="item">@item.Level4</Template>
+                    </RadzenDataGridColumn>
+                    <RadzenDataGridColumn TItem="OrderFixed" Title="الخدمة 4">
+                        <Template Context="item">@item.Level5</Template>
+                    </RadzenDataGridColumn>
+                    <RadzenDataGridColumn TItem="OrderFixed" Title="الخدمة 5">
+                        <Template Context="item">@item.Level6</Template>
+                    </RadzenDataGridColumn>
+                    <RadzenDataGridColumn TItem="OrderFixed" Title="التسمية">
+                        <Template Context="item">
+                            <div style="white-space: normal; max-width: 150px;">@item.Label</div>
+                        </Template>
+                    </RadzenDataGridColumn>
+                    <RadzenDataGridColumn TItem="OrderFixed" Title="تدفق العمل">
+                        <Template Context="item">@item.WorkFlow</Template>
+                    </RadzenDataGridColumn>
+                    <RadzenDataGridColumn TItem="OrderFixed" Title="Okm">
+                        <Template Context="item">@item.Okm</Template>
+                    </RadzenDataGridColumn>
+                    <RadzenDataGridColumn TItem="OrderFixed" Title="إجراءات" Width="130px">
+                        <Template Context="item">
+                            @if (CanEdit)
+                            {
+                                <RadzenButton Icon="edit" ButtonStyle="ButtonStyle.Light"
+                                              Style="margin-left: 5px; font-size: 14px;" Click="@(() => EditItem(item))" Tooltip="تعديل" />
+                            }
+                            @if (CanDelete)
+                            {
+                                <RadzenButton Icon="delete" ButtonStyle="ButtonStyle.Danger"
+                                              Click="@(() => ConfirmDelete(item.Id))" Tooltip="حذف" />
+                            }
+                        </Template>
+                    </RadzenDataGridColumn>
+                </Columns>
+            </RadzenDataGrid>
+        </div>
+    }
+}
+
+@code {
+    RadzenDataGrid<OrderFixed>? grid;
+    List<OrderFixed>? orderFixedList;
+    List<Section> sections = new();
+    string searchTerm = string.Empty;
+    string? selectedSection;
+    OrderFixed? editItem;
+    string currentUserName = "غير معروف";
+
+    // الصلاحيات
+    private bool CanView = false;
+    private bool CanAdd = false;
+    private bool CanEdit = false;
+    private bool CanDelete = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadPermissions();
+        if (!CanView)
+        {
+            NavigationManager.NavigateTo("/Account/AccessDenied");
+            return;
+        }
+
+        await LoadData();
+        sections = await SectionService.GetAllAsync();
+
+        var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        if (user.Identity != null && user.Identity.IsAuthenticated)
+        {
+            currentUserName = user.Identity.Name ?? "بدون اسم مستخدم";
+        }
+    }
+
+    private async Task LoadPermissions()
+    {
+        var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+
+        var roles = user.Claims.Where(c => c.Type == System.Security.Claims.ClaimTypes.Role)
+                               .Select(c => c.Value).ToList();
+
+        var allPermissions = new List<string>();
+        foreach (var role in roles)
+        {
+            var perms = await RoleService.GetPermissionsByRoleAsync(role);
+            allPermissions.AddRange(perms);
+        }
+
+        var permissions = allPermissions.Distinct().ToList();
+
+        CanView = permissions.Contains("Permissions.orderfixed.View");
+        CanAdd = permissions.Contains("Permissions.orderfixed.Add");
+        CanEdit = permissions.Contains("Permissions.orderfixed.Edit");
+        CanDelete = permissions.Contains("Permissions.orderfixed.Delete");
+    }
+
+    async Task LoadData()
+    {
+        orderFixedList = await Service.GetAllAsync() ?? new();
+        if (grid != null)
+            await grid.Reload();
+    }
+
+    IEnumerable<OrderFixed> FilteredList =>
+        (orderFixedList ?? Enumerable.Empty<OrderFixed>())
+        .Where(x =>
+            (string.IsNullOrWhiteSpace(searchTerm) || SearchMatch(x)) &&
+            (string.IsNullOrWhiteSpace(selectedSection) || x.Level1 == selectedSection));
+
+    bool SearchMatch(OrderFixed x)
+    {
+        var term = searchTerm.ToLowerInvariant();
+        return
+            (x.Level1?.ToLowerInvariant().Contains(term) ?? false) ||
+            (x.Level2?.ToLowerInvariant().Contains(term) ?? false) ||
+            (x.Level3?.ToLowerInvariant().Contains(term) ?? false) ||
+            (x.Level4?.ToLowerInvariant().Contains(term) ?? false) ||
+            (x.Level5?.ToLowerInvariant().Contains(term) ?? false) ||
+            (x.Level6?.ToLowerInvariant().Contains(term) ?? false) ||
+            (x.Label?.ToLowerInvariant().Contains(term) ?? false) ||
+            (x.WorkFlow?.ToLowerInvariant().Contains(term) ?? false) ||
+            (x.Okm?.ToLowerInvariant().Contains(term) ?? false) ||
+            (x.CreatedBy?.ToLowerInvariant().Contains(term) ?? false);
+    }
+
+    async Task ShowCreateDialog()
+    {
+        if (!CanAdd) return;
+
+        editItem = new OrderFixed
+            {
+                CreationDate = DateTime.Now,
+                CreatedBy = currentUserName
+            };
+
+        await OpenEditDialog();
+    }
+
+    async Task EditItem(OrderFixed item)
+    {
+        if (!CanEdit) return;
+
+        editItem = new OrderFixed
+            {
+                Id = item.Id,
+                Types = item.Types,
+                Level1 = item.Level1,
+                Level2 = item.Level2,
+                Level3 = item.Level3,
+                Level4 = item.Level4,
+                Level5 = item.Level5,
+                Level6 = item.Level6,
+                Label = item.Label,
+                WorkFlow = item.WorkFlow,
+                Okm = item.Okm,
+                CreatedBy = item.CreatedBy,
+                CreationDate = item.CreationDate
+            };
+
+        await OpenEditDialog();
+    }
+
+    async Task OpenEditDialog()
+    {
+        var result = await DialogService.OpenAsync<EditOrderFixedDialog>(
+            editItem!.Id == 0 ? "إضافة جديد" : "تعديل",
+            new Dictionary<string, object> { { "EditItem", editItem }, { "Sections", sections } },
+            new DialogOptions { Width = "700px", Height = "auto", Resizable = true });
+
+        if (result is OrderFixed updatedItem)
+        {
+            if (updatedItem.Id == 0)
+            {
+                await Service.AddAsync(updatedItem);
+                ShowNotification("تمت الإضافة بنجاح!", NotificationSeverity.Success);
+            }
+            else
+            {
+                await Service.UpdateAsync(updatedItem);
+                ShowNotification("تم التعديل بنجاح!", NotificationSeverity.Success);
+            }
+
+            await LoadData();
+        }
+    }
+
+    async Task ConfirmDelete(int id)
+    {
+        if (!CanDelete) return;
+
+        bool? confirmed = await DialogService.Confirm("هل أنت متأكد من حذف هذا العنصر؟", "تأكيد الحذف", new ConfirmOptions { OkButtonText = "حذف", CancelButtonText = "إلغاء" });
+        if (confirmed == true)
+        {
+            try
+            {
+                await Service.DeleteAsync(id);
+                ShowNotification("تم الحذف بنجاح!", NotificationSeverity.Success);
+                await LoadData();
+            }
+            catch (Exception ex)
+            {
+                ShowNotification($"حدث خطأ أثناء الحذف: {ex.Message}", NotificationSeverity.Error);
+            }
+        }
+    }
+
+    void ClearSearch()
+    {
+        searchTerm = string.Empty;
+        selectedSection = null;
+        grid?.Reload();
+    }
+
+    void ShowNotification(string message, NotificationSeverity severity)
+    {
+        NotificationService.Notify(new NotificationMessage
+            {
+                Severity = severity,
+                Summary = severity == NotificationSeverity.Success ? "نجاح" : "خطأ",
+                Detail = message,
+                Duration = 4000
+            });
+    }
+
+    void OnInputHandler(ChangeEventArgs e) => OnSearchInput(e);
+
+    System.Timers.Timer? searchTimer;
+
+    void OnSearchInput(ChangeEventArgs e)
+    {
+        searchTerm = e.Value?.ToString() ?? string.Empty;
+
+        searchTimer?.Stop();
+        searchTimer?.Dispose();
+
+        searchTimer = new System.Timers.Timer(300);
+        searchTimer.Elapsed += async (s, args) =>
+        {
+            searchTimer?.Stop();
+            searchTimer?.Dispose();
+            await InvokeAsync(async () =>
+            {
+                await grid!.Reload();
+                StateHasChanged();
+            });
+        };
+        searchTimer.AutoReset = false;
+        searchTimer.Start();
+    }
+}

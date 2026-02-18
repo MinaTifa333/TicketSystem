@@ -1,0 +1,15 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<!-- https://go.microsoft.com/fwlink/?LinkID=208121. -->
+<Project>
+  <PropertyGroup>
+    <_PublishTargetUrl>C:\Users\minat\Desktop\Mij</_PublishTargetUrl>
+    <History>True|2025-07-10T11:18:04.4886699Z||;True|2025-07-10T13:55:11.9758277+03:00||;True|2025-07-05T20:21:49.2239566+03:00||;True|2025-07-05T20:14:55.9938130+03:00||;</History>
+    <LastFailureDetails />
+    <TimeStampOfAssociatedLegacyPublishXmlFile />
+  </PropertyGroup>
+  <ItemGroup>
+    <EFMigrations Include="TicketSystem.Data.ApplicationDbContext">
+      <Value>Server=MINATIFA%3bDatabase=TicketSystemAll%3bTrusted_Connection=True%3bMultipleActiveResultSets=true%3bTrustServerCertificate=True</Value>
+    </EFMigrations>
+  </ItemGroup>
+</Project>

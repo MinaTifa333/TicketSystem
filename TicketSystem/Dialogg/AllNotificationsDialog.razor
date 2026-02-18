@@ -1,0 +1,238 @@
+﻿@using Microsoft.EntityFrameworkCore
+@using Radzen
+@using Radzen.Blazor
+@using TicketSystem.Data
+@using TicketSystem.Model
+
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+@inject CurrentUserModel UserContext
+@inject DialogService DialogService
+@inject NotificationService NotificationService
+
+<div class="p-3" style="max-height: 70vh; overflow-y: auto;">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h5 class="text-primary mb-0 d-flex align-items-center gap-2">
+            <i class="bi bi-bell-fill"></i> كل الإشعارات
+            @if (notifications.Any(n => !n.IsRead))
+            {
+                <span class="badge bg-danger">@notifications.Count(n => !n.IsRead)</span>
+            }
+        </h5>
+
+        <div class="d-flex gap-2">
+           
+
+            <RadzenButton Text="مسح الإشعارات"
+                          Icon="delete"
+                          Size="ButtonSize.Small"
+                          Click="@ClearAll"
+                          ButtonStyle="ButtonStyle.Danger"
+                          Disabled="@(!notifications.Any())" />
+        </div>
+    </div>
+
+    @if (!notifications.Any())
+    {
+        <div class="alert alert-warning d-flex align-items-center gap-2">
+            <i class="bi bi-bell-slash"></i>
+            لا توجد إشعارات حالياً.
+        </div>
+    }
+    else
+    {
+        <ul class="list-group list-group-flush">
+            @foreach (var n in notifications)
+            {
+                <li class="list-group-item d-flex justify-content-between align-items-start @(n.IsRead ? "" : "bg-light border-start border-4 border-primary")">
+                    <div>
+                        <div class="mb-1 @(n.IsRead ? "" : "fw-bold text-dark")">
+                            <i class="bi @(n.IsRead ? "bi-envelope-open text-secondary" : "bi-envelope text-primary") me-1"></i>
+                            @n.Title
+                        </div>
+                        <div class="ms-4 mb-1">@n.Message</div>
+                        <small class="text-muted">@n.CreatedAt.ToString("yyyy/MM/dd HH:mm")</small>
+                    </div>
+
+                    <div class="d-flex gap-1">
+                        <RadzenButton Icon="info"
+                                      Size="ButtonSize.Small"
+                                      ButtonStyle="ButtonStyle.Info"
+                                      Disabled="@(n.RelatedOrderId == null)"
+                                      Click="() => ViewNotification(n.RelatedOrderId)" />
+
+                        @if (!n.IsRead)
+                        {
+                            <RadzenButton Icon="visibility"
+                                          Size="ButtonSize.Small"
+                                          ButtonStyle="ButtonStyle.Light"
+                                          Click="() => MarkAsRead(n.Id)" />
+                        }
+                    </div>
+                </li>
+            }
+        </ul>
+    }
+</div>
+
+
+
+@code {
+    private List<Notification> notifications = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadNotifications();
+    }
+
+    private async Task LoadNotifications()
+    {
+        try
+        {
+            using var ctx = await DbFactory.CreateDbContextAsync();
+            var sectionId = UserContext.SectionId.ToString();
+            notifications = await ctx.Notifications
+                .Where(n => n.TargetSectionId == sectionId)
+                .OrderByDescending(n => n.CreatedAt)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine("فشل في تحميل الإشعارات: " + ex.Message);
+            NotificationService.Notify(NotificationSeverity.Error, "خطأ", "تعذر تحميل الإشعارات.");
+        }
+    }
+
+    private async Task MarkAllAsRead()
+    {
+        try
+        {
+            using var ctx = await DbFactory.CreateDbContextAsync();
+            var sectionId = UserContext.SectionId.ToString();
+
+            var unread = await ctx.Notifications
+                .Where(n => n.TargetSectionId == sectionId && !n.IsRead)
+                .ToListAsync();
+
+            if (unread.Any())
+            {
+                foreach (var n in unread)
+                    n.IsRead = true;
+
+                await ctx.SaveChangesAsync();
+
+                foreach (var n in notifications.Where(n => !n.IsRead))
+                    n.IsRead = true;
+
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine("خطأ أثناء تمييز الكل كمقروء: " + ex.Message);
+            NotificationService.Notify(NotificationSeverity.Error, "خطأ", "تعذر تنفيذ العملية.");
+        }
+    }
+
+    private async Task ClearAll()
+    {
+        var confirmed = await DialogService.Confirm("هل تريد حذف جميع الإشعارات؟", "تأكيد الحذف", new ConfirmOptions { OkButtonText = "نعم", CancelButtonText = "إلغاء" });
+        if (confirmed == true)
+        {
+            try
+            {
+                using var ctx = await DbFactory.CreateDbContextAsync();
+                var sectionId = UserContext.SectionId.ToString();
+
+                var all = await ctx.Notifications
+                    .Where(n => n.TargetSectionId == sectionId)
+                    .ToListAsync();
+
+                ctx.Notifications.RemoveRange(all);
+                await ctx.SaveChangesAsync();
+
+                notifications.Clear();
+                await InvokeAsync(StateHasChanged);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("خطأ أثناء مسح الإشعارات: " + ex.Message);
+                NotificationService.Notify(NotificationSeverity.Error, "خطأ", "تعذر تنفيذ عملية المسح.");
+            }
+        }
+    }
+
+    private async Task ViewNotification(int? orderId)
+    {
+        if (orderId.HasValue)
+        {
+            // عرض تفاصيل الطلب
+            await DialogService.OpenAsync<OrderDetailsDialog>(
+                "تفاصيل الطلب",
+                new Dictionary<string, object> { ["OrderId"] = orderId.Value },
+                new DialogOptions { Width = "900px", Resizable = true });
+
+            // تحديث الإشعار كمقروء
+            try
+            {
+                using var ctx = await DbFactory.CreateDbContextAsync();
+                var sectionId = UserContext.SectionId.ToString();
+
+                var noti = await ctx.Notifications
+                    .FirstOrDefaultAsync(n => n.RelatedOrderId == orderId && n.TargetSectionId == sectionId);
+
+                if (noti != null && !noti.IsRead)
+                {
+                    noti.IsRead = true;
+                    await ctx.SaveChangesAsync();
+
+                    var local = notifications.FirstOrDefault(n => n.Id == noti.Id);
+                    if (local != null)
+                        local.IsRead = true;
+
+                    await InvokeAsync(StateHasChanged);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("خطأ أثناء تحديث حالة الإشعار: " + ex.Message);
+                NotificationService.Notify(NotificationSeverity.Warning, "خطأ", "تعذر تحديث حالة الإشعار.");
+            }
+        }
+        else
+        {
+            NotificationService.Notify(NotificationSeverity.Warning, "طلب غير معروف", "لا يوجد طلب مرتبط بهذا الإشعار.");
+        }
+    }
+
+    private async Task MarkAsRead(int notificationId)
+    {
+        try
+        {
+            using var ctx = await DbFactory.CreateDbContextAsync();
+            var notif = await ctx.Notifications.FindAsync(notificationId);
+
+            if (notif != null && !notif.IsRead)
+            {
+                notif.IsRead = true;
+                await ctx.SaveChangesAsync();
+
+                var local = notifications.FirstOrDefault(n => n.Id == notificationId);
+                if (local != null)
+                {
+                    local.IsRead = true;
+                    await InvokeAsync(StateHasChanged);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine("خطأ أثناء تمييز الإشعار كمقروء: " + ex.Message);
+            NotificationService.Notify(NotificationSeverity.Error, "خطأ", "فشل في تمييز الإشعار كمقروء.");
+        }
+    }
+
+    private void Close()
+    {
+        DialogService.Close();
+    }
+}

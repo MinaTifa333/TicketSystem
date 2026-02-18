@@ -1,0 +1,34 @@
+﻿@page "/orders"
+
+@inject OrderFixedService OrderFixedService
+@rendermode InteractiveServer
+
+<RadzenStack  AlignItems="AlignItems.Center" JustifyContent="JustifyContent.Center" Gap="0.5rem" class="rz-p-12">
+    <RadzenLabel Text="اختر الخدمة" Component="DropDownDataGridColumns" />
+    <RadzenDropDownDataGrid @bind-Value=@selectedId Data=@orderFixedList TextProperty="DisplayText" ValueProperty="Id"
+                            AllowColumnResize="true" AllowFilteringByAllStringColumns="true" Name="DropDownDataGridColumns">
+        <Columns>
+            <RadzenDropDownDataGridColumn Property="Level1" Title="Level1" Width="200px" />
+            <RadzenDropDownDataGridColumn Property="Level2" Title="Level2" Width="200px" />
+            <RadzenDropDownDataGridColumn Property="Level3" Title="Level3" Width="200px" />
+            <RadzenDropDownDataGridColumn Property="Level4" Title="Level4" Width="200px" />
+            <RadzenDropDownDataGridColumn Property="Level5" Title="Level5" Width="200px" />
+            <RadzenDropDownDataGridColumn Property="Level6" Title="Level6" Width="200px" />
+            <RadzenDropDownDataGridColumn Property="CreatedBy" Title="Created By" Width="150px" />
+            <RadzenDropDownDataGridColumn Property="CreationDate" Title="Date" Width="150px" FormatString="{0:yyyy-MM-dd}" />
+        </Columns>
+    </RadzenDropDownDataGrid>
+</RadzenStack>
+
+@code {
+    int? selectedId;
+    List<OrderFixed> orderFixedList;
+
+    protected override async Task OnInitializedAsync()
+    {
+        orderFixedList = await OrderFixedService.GetAllAsync();
+    }
+
+}
+
+ 

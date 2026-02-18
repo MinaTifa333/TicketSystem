@@ -1,0 +1,73 @@
+﻿@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@using Radzen.Blazor
+@using TicketSystem.Data
+@using TicketSystem.Dialogg
+@using TicketSystem.Model
+@inherits LayoutComponentBase
+@inject NavigationManager NavigationManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject UserManager<ApplicationUser> UserManager
+@inject IJSRuntime JS
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+@inject CurrentUserModel UserContext
+@implements IDisposable
+@inject NavigationManager Nav
+
+
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
+
+<div dir="rtl" class="page">
+
+    @if (!Nav.Uri.Contains("/monthly-section-report"))
+    {
+        <div class="sidebar">
+            <NavMenu />
+        </div>
+     }
+
+    <RadzenComponents @rendermode="InteractiveServer" />
+
+    <main>
+         @if (!Nav.Uri.Contains("/monthly-section-report"))
+        {
+        <UserInfo />
+        }
+
+        <article class="content px-4">
+            @Body
+        </article>
+    </main>
+</div>
+
+<div id="blazor-error-ui">
+    An unhandled error has occurred.
+    <a href="" class="reload">Reload</a>
+    <a class="dismiss">🗙</a>
+</div>
+<RadzenNotification />
+<RadzenDialog />
+
+@code {
+    private string? currentUrl;
+
+    protected override Task OnInitializedAsync()
+    {
+        currentUrl = NavigationManager.ToBaseRelativePath(NavigationManager.Uri);
+        NavigationManager.LocationChanged += OnLocationChanged;
+        return Task.CompletedTask;
+    }
+
+
+    private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+    {
+        currentUrl = NavigationManager.ToBaseRelativePath(e.Location);
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        NavigationManager.LocationChanged -= OnLocationChanged;
+    }
+}

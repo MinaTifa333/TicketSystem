@@ -1,0 +1,69 @@
+﻿@using Microsoft.AspNetCore.Identity
+@using TicketSystem.Data
+@inject UserManager<ApplicationUser> UserManager
+@inject DialogService DialogService
+@inject NotificationService NotificationService
+
+
+<EditForm OnValidSubmit="SaveAsync" dir="rtl">
+    <div class="mb-3">
+        <label class="form-label fw-bold">اسم المستخدم:</label>
+        <div>@User.UserName</div>
+    </div>
+
+    <div class="mb-3">
+        <label class="form-label fw-bold">الصلاحيات:</label>
+        @foreach (var role in AllRoles)
+        {
+            <div class="form-check">
+                <input class="form-check-input"
+                       type="checkbox"
+                       id="@role"
+                       @bind="RoleSelections[role]" />
+                <label class="form-check-label" for="@role">@role</label>
+            </div>
+        }
+    </div>
+
+    <div class="d-flex justify-content-end">
+        <button type="submit" class="btn btn-primary me-2">حفظ</button>
+        <button type="button" class="btn btn-secondary" @onclick="Cancel">إلغاء</button>
+    </div>
+</EditForm>
+
+
+@code {
+    [Parameter] public ApplicationUser User { get; set; } = new();
+    [Parameter] public List<string> AllRoles { get; set; } = new();
+
+    private Dictionary<string, bool> RoleSelections = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        // احصل على الأدوار الحالية للمستخدم
+        var roles = await UserManager.GetRolesAsync(User);
+
+        // جهز القاموس: المفتاح هو اسم الدور، والقيمة true إذا كان المستخدم لديه الدور
+        RoleSelections = AllRoles.ToDictionary(role => role, role => roles.Contains(role));
+    }
+
+    private async Task SaveAsync()
+    {
+        var currentRoles = await UserManager.GetRolesAsync(User);
+
+        foreach (var role in AllRoles)
+        {
+            var isSelected = RoleSelections.TryGetValue(role, out var selected) && selected;
+
+            if (isSelected && !currentRoles.Contains(role))
+                await UserManager.AddToRoleAsync(User, role);
+            else if (!isSelected && currentRoles.Contains(role))
+                await UserManager.RemoveFromRoleAsync(User, role);
+        }
+
+        NotificationService.Notify(NotificationSeverity.Success, "تم الحفظ", "تم تحديث صلاحيات المستخدم.");
+        DialogService.Close(true);
+    }
+
+    private void Cancel() => DialogService.Close(false);
+}

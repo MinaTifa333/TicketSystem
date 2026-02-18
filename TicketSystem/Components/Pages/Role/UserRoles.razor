@@ -1,0 +1,307 @@
+﻿@page "/admin/user-roles"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = "Admin")]
+
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using TicketSystem.Services
+@using Radzen
+@using Radzen.Blazor
+@inject RoleService RoleService
+@inject NavigationManager NavigationManager
+
+<div class="container mt-4" dir="rtl">
+    <div class="card shadow-sm">
+        <div class="card-header bg-primary text-white">
+            <h5 class="mb-0">إدارة الأدوار</h5>
+        </div>
+
+        <div class="card-body">
+
+            <div class="input-group mb-4">
+                <input class="form-control" placeholder="اسم الدور الجديد" @bind="NewRole" />
+                <button class="btn btn-success" @onclick="ShowAddRoleModal">
+                    <i class="bi bi-plus-circle"></i> إضافة
+                </button>
+            </div>
+
+            @if (RoleList != null && RoleList.Any())
+            {
+                <ul class="list-group">
+                    @foreach (var role in RoleList)
+                    {
+                        <li class="list-group-item d-flex justify-content-between align-items-center">
+                            <span>@role.Name</span>
+                            <div>
+                                <button class="btn btn-outline-primary btn-sm me-1" @onclick="() => EditRolePermissions(role)">
+                                    صلاحيات
+                                </button>
+                                <button class="btn btn-outline-danger btn-sm" @onclick="() => ConfirmDelete(role)">
+                                    <i class="bi bi-trash"></i> حذف
+                                </button>
+                            </div>
+                        </li>
+                    }
+                </ul>
+            }
+            else
+            {
+                <div class="alert alert-info">لا توجد أدوار حالياً.</div>
+            }
+        </div>
+    </div>
+</div>
+
+@if (RoleToDelete != null)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">تأكيد الحذف</h5>
+                    <button type="button" class="btn-close" @onclick="CancelDelete"></button>
+                </div>
+                <div class="modal-body">
+                    <p>هل أنت متأكد أنك تريد حذف الدور <strong>@RoleToDelete.Name</strong>؟</p>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="CancelDelete">إلغاء</button>
+                    <button class="btn btn-danger" @onclick="DeleteConfirmed">نعم، حذف</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@if (RoleToEdit != null)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">@((IsAddingNewRole ? "إضافة" : "تعديل") + " صلاحيات: " + RoleToEdit.Name)</h5>
+                    <button type="button" class="btn-close" @onclick="CloseRoleModal"></button>
+                </div>
+                <div class="modal-body">
+                    @foreach (var group in AllPermissions.GroupBy(p =>
+                   {
+                       var parts = p.Split('.');
+                       return parts.Length > 1 ? parts[1] : p;
+                   }))
+                    {
+                        <div class="card mb-3 shadow-sm" style="background-color:#f9f9f9;">
+                            <div class="card-header bg-light">
+                                <strong>@group.Key</strong>
+                            </div>
+                            <div class="card-body">
+                                <div class="row g-2">
+                                    @foreach (var permission in group.OrderBy(p => p))
+                                    {
+                                        <div class="col-md-6 col-lg-4">
+                                            <RadzenStack AlignItems="AlignItems.Center" Orientation="Radzen.Orientation.Horizontal" Gap="0.5rem">
+                                                <RadzenLabel Text="@PermissionToArabic(permission)" />
+                                                <RadzenSwitch TValue="bool"
+                                                              Value="@(PermissionsMap.ContainsKey(permission) && PermissionsMap[permission])"
+                                                              Change="@(args => PermissionsMap[permission] = args)"
+                                                              Style="width:50px;" />
+                                            </RadzenStack>
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                        </div>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="CloseRoleModal">إلغاء</button>
+                    <button class="btn btn-primary" @onclick="SavePermissions">حفظ</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private string NewRole = string.Empty;
+    private List<IdentityRole> RoleList = new();
+    private IdentityRole? RoleToDelete;
+    private IdentityRole? RoleToEdit;
+    private bool IsAddingNewRole = false;
+    private Dictionary<string, bool> PermissionsMap = new();
+
+    private List<string> AllPermissions = new()
+    {
+        "Permissions.Sections.View",
+        "Permissions.Sections.Add",
+        "Permissions.Sections.Edit",
+        "Permissions.Sections.Delete",
+
+        "Permissions.orderfixed.View",
+        "Permissions.orderfixed.Add",
+        "Permissions.orderfixed.Edit",
+        "Permissions.orderfixed.Delete",
+
+        "Permissions.rates.View",
+        "Permissions.rates.Add",
+        "Permissions.rates.Edit",
+        "Permissions.rates.Delete",
+
+        "Permissions.Points.View",
+        "Permissions.Points.Export",
+
+        "Permissions.orders.View",
+        "Permissions.orders.Add",
+        "Permissions.orders.Edit",
+        "Permissions.orders.Delete",
+
+        "Permissions.users.View",
+        "Permissions.users.Add",
+        "Permissions.users.Edit",
+        "Permissions.users.Delete",
+
+
+        "Permissions.serviceUsage.View",
+        "Permissions.serviceUsage.Export",
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadRoles();
+    }
+
+    private async Task LoadRoles()
+    {
+        RoleList = await RoleService.GetAllRolesAsync();
+    }
+
+    private void ConfirmDelete(IdentityRole role) => RoleToDelete = role;
+    private void CancelDelete() => RoleToDelete = null;
+
+    private async Task DeleteConfirmed()
+    {
+        if (RoleToDelete == null) return;
+        var result = await RoleService.DeleteRoleAsync(RoleToDelete.Id);
+        if (result.Succeeded)
+        {
+            RoleList.Remove(RoleToDelete);
+            RoleToDelete = null;
+            StateHasChanged();
+        }
+    }
+
+    private void ShowAddRoleModal()
+    {
+        if (string.IsNullOrWhiteSpace(NewRole)) return;
+        RoleToEdit = new IdentityRole { Name = NewRole };
+        IsAddingNewRole = true;
+
+        if (NewRole == "Admin")
+        {
+            PermissionsMap = AllPermissions.ToDictionary(p => p, p => true);
+        }
+        else
+        {
+            PermissionsMap = AllPermissions.ToDictionary(p => p, p => false);
+        }
+    }
+
+    private async void EditRolePermissions(IdentityRole role)
+    {
+        RoleToEdit = role;
+        IsAddingNewRole = false;
+
+        if (role.Name == "Admin")
+        {
+            PermissionsMap = AllPermissions.ToDictionary(p => p, p => true);
+        }
+        else
+        {
+            var perms = await RoleService.GetPermissionsByRoleAsync(role.Name);
+            PermissionsMap = AllPermissions.ToDictionary(p => p, p => perms.Contains(p));
+        }
+
+        StateHasChanged();
+    }
+
+    private void CloseRoleModal()
+    {
+        RoleToEdit = null;
+        IsAddingNewRole = false;
+        PermissionsMap.Clear();
+    }
+
+    private async Task SavePermissions()
+    {
+        if (RoleToEdit == null) return;
+
+        List<string> selectedPermissions;
+
+        if (RoleToEdit.Name == "Admin")
+        {
+            selectedPermissions = AllPermissions.ToList();
+        }
+        else
+        {
+            selectedPermissions = PermissionsMap.Where(p => p.Value).Select(p => p.Key).ToList();
+        }
+
+        if (IsAddingNewRole)
+        {
+            var result = await RoleService.AddRoleAsync(RoleToEdit.Name);
+            if (result.Succeeded)
+            {
+                foreach (var perm in selectedPermissions)
+                    await RoleService.AddPermissionToRoleAsync(RoleToEdit.Name, perm);
+
+                RoleList.Add(RoleToEdit);
+            }
+        }
+        else
+        {
+            await RoleService.UpdateRolePermissionsAsync(RoleToEdit.Id, selectedPermissions);
+        }
+
+        CloseRoleModal();
+        NewRole = string.Empty;
+        StateHasChanged();
+    }
+
+    private string PermissionToArabic(string permission)
+    {
+        return permission switch
+        {
+            "Permissions.Sections.View" => "👁️ عرض",
+            "Permissions.Sections.Add" => "➕ إضافة",
+            "Permissions.Sections.Edit" => "✏️ تعديل",
+            "Permissions.Sections.Delete" => "🗑️ حذف",
+
+            "Permissions.orderfixed.View" => "👁️ عرض",
+            "Permissions.orderfixed.Add" => "➕ إضافة",
+            "Permissions.orderfixed.Edit" => "✏️ تعديل",
+            "Permissions.orderfixed.Delete" => "🗑️ حذف",
+
+            "Permissions.rates.View" => "👁️ عرض",
+            "Permissions.rates.Add" => "➕ إضافة",
+            "Permissions.rates.Edit" => "✏️ تعديل",
+            "Permissions.rates.Delete" => "🗑️ حذف",
+
+            "Permissions.Points.View" => "👁️ عرض النقاط",
+            "Permissions.Points.Export" => "📤 تصدير النقاط",
+
+            "Permissions.orders.View" => "👁️ عرض الطلبات",
+            "Permissions.orders.Add" => "➕ إضافة طلب",
+            "Permissions.orders.Edit" => "✏️ تعديل طلب",
+            "Permissions.orders.Delete" => "🗑️ حذف طلب",
+
+            "Permissions.users.View" => "👁️ عرض ",
+            "Permissions.users.Add" => "➕ إضافة مستخدم",
+            "Permissions.users.Edit" => "✏️ تعديل مستخدم",
+            "Permissions.users.Delete" => "🗑️ حذف مستخدم",
+
+
+            "Permissions.serviceUsage.View" => "👁️ عرض تقارير الخدمات",
+            "Permissions.serviceUsage.Export" => "📤 تصدير تقارير الخدمات",
+            _ => permission
+        };
+    }
+}

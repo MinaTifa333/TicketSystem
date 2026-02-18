@@ -1,0 +1,604 @@
+﻿@page "/users"
+@using TicketSystem.Data
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@using System.ComponentModel.DataAnnotations
+@using Radzen
+@using Radzen.Blazor
+@using TicketSystem.TSModel
+@inject UserManager<ApplicationUser> UserManager
+@inject RoleManager<IdentityRole> RoleManager
+@inject IDbContextFactory<ApplicationDbContext> ContextFactory
+@inject NavigationManager NavigationManager
+@inject IJSRuntime JSRuntime
+@inject NotificationService NotificationService
+@rendermode InteractiveServer
+@inject AuthenticationStateProvider AuthProvider
+@using System.Security.Claims
+@inject RoleService RoleService
+
+<div class="position-fixed top-0 end-0 p-3" style="z-index: 1080;">
+    @if (!string.IsNullOrEmpty(successMessage))
+    {
+        <div class="toast align-items-center text-white bg-success border-0 show mb-2" role="alert">
+            <div class="d-flex">
+                <div class="toast-body">✅ @successMessage</div>
+                <button type="button" class="btn-close btn-close-white me-2 m-auto"
+                        @onclick="() => successMessage = null"></button>
+            </div>
+        </div>
+    }
+
+    @if (!string.IsNullOrEmpty(errorMessage))
+    {
+        <div class="toast align-items-center text-white bg-danger border-0 show" role="alert">
+            <div class="d-flex">
+                <div class="toast-body">❌ @errorMessage</div>
+                <button type="button" class="btn-close btn-close-white me-2 m-auto"
+                        @onclick="() => errorMessage = null"></button>
+            </div>
+        </div>
+    }
+</div>
+
+<div class="card shadow-sm border-0 mb-4" dir="rtl">
+    <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+        <h5 class="mb-0">👥 إدارة المستخدمين</h5>
+        @if (CanAdd)
+        {
+            <button class="btn btn-light btn-sm" @onclick="OpenAddModal">➕ إضافة مستخدم</button>
+        }
+    </div>
+    <div class="card-body">
+        @if (!CanView)
+        {
+            <div class="alert alert-danger">🚫 لا تملك صلاحية عرض المستخدمين</div>
+        }
+        else if (users == null)
+        {
+            <p><em>جاري التحميل...</em></p>
+        }
+        else
+        {
+            <table class="table table-hover text-center align-middle">
+                <thead class="table-light">
+                    <tr>
+                        <th>📧 البريد الإلكتروني</th>
+                        <th>🎯 الدور</th>
+                        <th>🔒 إغلاق الطلب</th>
+                        <th>⚙️ الإجراءات</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var user in users)
+                    {
+                        <tr>
+                            <td>@user.Email</td>
+                            <td><span class="badge bg-secondary">@user.Role</span></td>
+                            <td>@(user.CanCloseOrder ? "نعم" : "لا")</td>
+                            <td>
+                                <div class="btn-group">
+                                    @if (CanEdit)
+                                    {
+                                        <button class="btn btn-sm btn-outline-primary"
+                                                @onclick="() => EditUser(user)">
+                                            ✏️ تعديل
+                                        </button>
+                                    }
+                                    @if (CanDelete)
+                                    {
+                                        <button class="btn btn-sm btn-outline-danger"
+                                                @onclick="() => ConfirmDelete(user.Id)">
+                                            🗑 حذف
+                                        </button>
+                                    }
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </div>
+</div>
+
+<!-- نافذة إضافة مستخدم -->
+@if (showAddModal)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5); z-index:1050;">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <EditForm Model="@newUser" OnValidSubmit="HandleValidSubmit">
+                    <DataAnnotationsValidator />
+                    <div class="modal-header">
+                        <h5 class="modal-title">➕ إضافة مستخدم</h5>
+                        <button type="button" class="btn-close" @onclick="CloseAddModal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">📧 البريد الإلكتروني</label>
+                            <InputText class="form-control" @bind-Value="newUser.Email" />
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">🔐 كلمة المرور</label>
+                            <InputText class="form-control" @bind-Value="newUser.Password" type="password" />
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">🎯 الدور</label>
+                            <InputSelect class="form-select" @bind-Value="newUser.Role">
+                                <option disabled value="">-- اختر الدور --</option>
+                                @foreach (var role in roles)
+                                {
+                                    <option value="@role">@role</option>
+                                }
+                            </InputSelect>
+                        </div>
+                        <div class="mb-3 d-flex align-items-center">
+                            <RadzenLabel Text="🔒 يمكنه إغلاق الطلب" Class="me-3 small fw-bold" />
+                            <RadzenSwitch @bind-Value="newUser.CanCloseOrder" TValue="bool"
+                                          Style="transform: scale(0.8); margin-left:10px;" />
+                        </div>
+
+
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">🏢 الأقسام</label>
+                            <div class="row g-2">
+                                @foreach (var sect in AllSections)
+                                {
+                                    <div class="col-md-6">
+                                        <div class="form-check form-switch mb-2">
+                                            <input class="form-check-input"
+                                                   type="checkbox"
+                                                   role="switch"
+                                                   checked="@newUser.SelectedSectionIds.Contains(sect.Id)"
+                                                   @onchange="(e) => ToggleSection(newUser, sect.Id, (bool)((ChangeEventArgs)e).Value!)" />
+                                            <label class="form-check-label">@sect.Name</label>
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+                        </div>
+
+              
+
+
+                        <ValidationSummary />
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-secondary" type="button" @onclick="CloseAddModal">❌ إلغاء</button>
+                        <button class="btn btn-primary" type="submit" disabled="@isSubmitting">
+                            @(isSubmitting ? "⏳ جاري الحفظ..." : "💾 حفظ")
+                        </button>
+                    </div>
+                </EditForm>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- نافذة تعديل مستخدم -->
+@if (editingUser != null)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5); z-index:1050;">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <EditForm Model="@editingUser" OnValidSubmit="HandleEditSubmit">
+                    <DataAnnotationsValidator />
+                    <div class="modal-header">
+                        <h5 class="modal-title">✏️ تعديل مستخدم</h5>
+                        <button type="button" class="btn-close" @onclick="() => editingUser = null"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">📧 البريد الإلكتروني</label>
+                            <InputText class="form-control" @bind-Value="editingUser.Email" />
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">🎯 الدور</label>
+                            <InputSelect class="form-select" @bind-Value="editingUser.Role">
+                                <option disabled value="">-- اختر الدور --</option>
+                                @foreach (var role in roles)
+                                {
+                                    <option value="@role">@role</option>
+                                }
+                            </InputSelect>
+                        </div>
+
+                        <div class="mb-3 d-flex align-items-center">
+                            <RadzenLabel Text="🔒 يمكنه إغلاق الطلب" Class="me-3 small fw-bold" />
+                            <RadzenSwitch @bind-Value="editingUser.CanCloseOrder"
+                                          TValue="bool"
+                                          Change="@(args => editingUser.CanCloseOrder = args)"
+                                          Style="transform: scale(0.8); margin-left:12px;" />
+                        </div>
+
+
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">🏢 الأقسام</label>
+                            <div class="row g-2">
+                                @foreach (var sect in AllSections)
+                                {
+                                    <div class="col-md-6">
+                                        <div class="form-check form-switch mb-2">
+                                            <input class="form-check-input"
+                                                   type="checkbox"
+                                                   role="switch"
+                                                   checked="@editingUser.SelectedSectionIds.Contains(sect.Id)"
+                                                   @onchange="(e) => ToggleSection(editingUser, sect.Id, (bool)((ChangeEventArgs)e).Value!)" />
+                                            <label class="form-check-label">@sect.Name</label>
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+                        </div>
+
+
+
+
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">🔐 كلمة المرور (اختياري)</label>
+                            <InputText class="form-control" @bind-Value="editingUser.Password" type="password" />
+                            <div class="form-text">اتركه فارغًا إذا لا تريد تغييره</div>
+                        </div>
+                        <ValidationSummary />
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-secondary" type="button" @onclick="() => editingUser = null">❌ إلغاء</button>
+                        <button class="btn btn-success" type="submit" disabled="@isSubmitting">
+                            @(isSubmitting ? "⏳ جاري الحفظ..." : "💾 حفظ التعديلات")
+                        </button>
+                    </div>
+                </EditForm>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private RegisterModel newUser = new();
+    private List<UserViewModel> users = new();
+    private List<string> roles = new();
+    private List<Section> AllSections = new();
+    private string? successMessage;
+    private string? errorMessage;
+    private EditUserModel? editingUser;
+    private bool showAddModal = false;
+    private bool isSubmitting = false;
+
+    private bool CanView = false;
+    private bool CanAdd = false;
+    private bool CanEdit = false;
+    private bool CanDelete = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+
+        var roles = user.Claims
+                        .Where(c => c.Type == ClaimTypes.Role)
+                        .Select(c => c.Value)
+                        .ToList();
+
+        var allPermissions = new List<string>();
+        foreach (var role in roles)
+        {
+            var perms = await RoleService.GetPermissionsByRoleAsync(role);
+            allPermissions.AddRange(perms);
+        }
+
+        var permissions = allPermissions.Distinct().ToList();
+
+        CanView = permissions.Contains("Permissions.users.View");
+        CanAdd = permissions.Contains("Permissions.users.Add");
+        CanEdit = permissions.Contains("Permissions.users.Edit");
+        CanDelete = permissions.Contains("Permissions.users.Delete");
+
+        if (!CanView)
+        {
+            NavigationManager.NavigateTo("/Account/AccessDenied");
+            return;
+        }
+
+        try
+        {
+            await LoadRoles();
+            await LoadSections();
+            await LoadUsers();
+        }
+        catch (Exception ex)
+        {
+            await LogError(ex);
+            errorMessage = "حدث خطأ أثناء تحميل البيانات. تحقق من logs/error.log";
+        }
+    }
+
+    private async Task LoadRoles()
+    {
+        roles = await RoleManager.Roles
+            .Select(r => r.Name!)
+            .OrderBy(n => n)
+            .ToListAsync();
+    }
+
+    private async Task LoadSections()
+    {
+        await using var db = await ContextFactory.CreateDbContextAsync();
+        AllSections = await db.Sections.AsNoTracking().ToListAsync();
+    }
+
+    private async Task LoadUsers()
+    {
+        await using var db = await ContextFactory.CreateDbContextAsync();
+        var userList = await UserManager.Users.ToListAsync();
+        users = new List<UserViewModel>();
+
+        foreach (var u in userList)
+        {
+            var userRoles = await UserManager.GetRolesAsync(u);
+            var sectionIds = await db.UserSections
+                .Where(us => us.UserId == u.Id)
+                .Select(us => us.SectionId)
+                .ToListAsync();
+
+            users.Add(new UserViewModel
+                {
+                    Id = u.Id,
+                    Email = u.Email!,
+                    Role = userRoles.FirstOrDefault(),
+                    SelectedSectionIds = sectionIds,
+                    CanCloseOrder = u.CanCloseOrder // الصلاحية الجديدة
+                });
+        }
+    }
+
+    private void OpenAddModal()
+    {
+        newUser = new RegisterModel();
+        errorMessage = successMessage = null;
+        showAddModal = true;
+    }
+
+    private void CloseAddModal()
+    {
+        showAddModal = false;
+        errorMessage = successMessage = null;
+    }
+
+    private void ToggleSection(object model, int sectionId, bool isChecked)
+    {
+        List<int> selectedSectionIds;
+        if (model is UserViewModel userModel)
+            selectedSectionIds = userModel.SelectedSectionIds;
+        else if (model is RegisterModel regModel)
+            selectedSectionIds = regModel.SelectedSectionIds;
+        else if (model is EditUserModel editModel)
+            selectedSectionIds = editModel.SelectedSectionIds;
+        else
+            return;
+
+        if (isChecked)
+        {
+            if (!selectedSectionIds.Contains(sectionId))
+                selectedSectionIds.Add(sectionId);
+        }
+        else
+        {
+            selectedSectionIds.Remove(sectionId);
+        }
+    }
+
+    private async Task LogError(Exception ex)
+    {
+        try
+        {
+            var message = ex.InnerException != null ? ex.InnerException.Message : ex.Message;
+            await File.AppendAllTextAsync("logs/error.log", $"{DateTime.Now}: {message}{Environment.NewLine}");
+        }
+        catch { }
+    }
+
+    private async Task HandleValidSubmit()
+    {
+        isSubmitting = true;
+        errorMessage = successMessage = null;
+
+        try
+        {
+            var existingUser = await UserManager.FindByEmailAsync(newUser.Email);
+            if (existingUser != null)
+            {
+                errorMessage = "❗ هذا البريد الإلكتروني مستخدم بالفعل.";
+                return;
+            }
+
+            var user = new ApplicationUser
+                {
+                    UserName = newUser.Email,
+                    Email = newUser.Email,
+                    EmailConfirmed = true,
+                    CanCloseOrder = newUser.CanCloseOrder // حفظ الصلاحية
+                };
+
+            var result = await UserManager.CreateAsync(user, newUser.Password);
+
+            if (result.Succeeded)
+            {
+                await UserManager.AddToRoleAsync(user, newUser.Role!);
+                await using var db = await ContextFactory.CreateDbContextAsync();
+                foreach (var sectionId in newUser.SelectedSectionIds)
+                {
+                    db.UserSections.Add(new UserSection
+                        {
+                            UserId = user.Id,
+                            SectionId = sectionId
+                        });
+                }
+                await db.SaveChangesAsync();
+                await LoadUsers();
+                newUser = new RegisterModel();
+                showAddModal = false;
+                successMessage = "✅ تمت إضافة المستخدم بنجاح.";
+            }
+            else
+            {
+                errorMessage = string.Join(" | ", result.Errors.Select(e => e.Description));
+            }
+        }
+        finally
+        {
+            isSubmitting = false;
+        }
+    }
+
+    private async Task ConfirmDelete(string userId)
+    {
+        if (await JSRuntime.InvokeAsync<bool>("confirm", "هل أنت متأكد من حذف هذا المستخدم؟"))
+        {
+            await DeleteUser(userId);
+        }
+    }
+
+    private async Task DeleteUser(string userId)
+    {
+        var user = await UserManager.FindByIdAsync(userId);
+        if (user != null)
+        {
+            await using var db = await ContextFactory.CreateDbContextAsync();
+            var userSections = await db.UserSections.Where(us => us.UserId == userId).ToListAsync();
+            db.UserSections.RemoveRange(userSections);
+            await db.SaveChangesAsync();
+            await UserManager.DeleteAsync(user);
+            await LoadUsers();
+            successMessage = "✅ تم حذف المستخدم بنجاح.";
+        }
+    }
+
+    private void EditUser(UserViewModel user)
+    {
+        editingUser = new EditUserModel
+            {
+                Id = user.Id,
+                Email = user.Email,
+                Role = user.Role ?? "",
+                SelectedSectionIds = new List<int>(user.SelectedSectionIds),
+                CanCloseOrder = user.CanCloseOrder // تحميل الصلاحية
+            };
+        successMessage = errorMessage = null;
+    }
+
+    private async Task HandleEditSubmit()
+    {
+        if (editingUser == null) return;
+
+        isSubmitting = true;
+        errorMessage = successMessage = null;
+
+        try
+        {
+            var user = await UserManager.FindByIdAsync(editingUser.Id);
+            if (user == null)
+            {
+                errorMessage = "⚠️ المستخدم غير موجود.";
+                return;
+            }
+
+            user.Email = editingUser.Email;
+            user.UserName = editingUser.Email;
+            user.CanCloseOrder = editingUser.CanCloseOrder; // تحديث الصلاحية
+
+            var existingRoles = await UserManager.GetRolesAsync(user);
+            var updateResult = await UserManager.UpdateAsync(user);
+
+            if (!updateResult.Succeeded)
+            {
+                errorMessage = string.Join(" | ", updateResult.Errors.Select(e => e.Description));
+                return;
+            }
+
+            if (!string.IsNullOrWhiteSpace(editingUser.Password))
+            {
+                var token = await UserManager.GeneratePasswordResetTokenAsync(user);
+                var passResult = await UserManager.ResetPasswordAsync(user, token, editingUser.Password);
+                if (!passResult.Succeeded)
+                {
+                    errorMessage = string.Join(" | ", passResult.Errors.Select(e => e.Description));
+                    return;
+                }
+            }
+
+            await UserManager.RemoveFromRolesAsync(user, existingRoles);
+            await UserManager.AddToRoleAsync(user, editingUser.Role!);
+
+            await using var db = await ContextFactory.CreateDbContextAsync();
+            var existingSections = await db.UserSections
+                .Where(x => x.UserId == user.Id)
+                .ToListAsync();
+            db.UserSections.RemoveRange(existingSections);
+
+            foreach (var sectionId in editingUser.SelectedSectionIds)
+            {
+                db.UserSections.Add(new UserSection
+                    {
+                        UserId = user.Id,
+                        SectionId = sectionId
+                    });
+            }
+            await db.SaveChangesAsync();
+
+            await LoadUsers();
+            editingUser = null;
+            successMessage = "✅ تم تعديل المستخدم بنجاح.";
+        }
+        finally
+        {
+            isSubmitting = false;
+        }
+    }
+
+    public class RegisterModel
+    {
+        [Required(ErrorMessage = "الإيميل مطلوب")]
+        [EmailAddress(ErrorMessage = "بريد إلكتروني غير صالح")]
+        public string Email { get; set; } = string.Empty;
+
+        [Required(ErrorMessage = "كلمة المرور مطلوبة")]
+        [MinLength(6, ErrorMessage = "على الأقل 6 حروف")]
+        public string Password { get; set; } = string.Empty;
+
+        [Required(ErrorMessage = "اختر الدور")]
+        public string Role { get; set; } = string.Empty;
+
+        public List<int> SelectedSectionIds { get; set; } = new();
+
+        public bool CanCloseOrder { get; set; } = false; // الصلاحية الجديدة
+    }
+
+    public class EditUserModel
+    {
+        public string Id { get; set; } = string.Empty;
+
+        [Required(ErrorMessage = "الإيميل مطلوب")]
+        [EmailAddress(ErrorMessage = "بريد إلكتروني غير صالح")]
+        public string Email { get; set; } = string.Empty;
+
+        [Required(ErrorMessage = "اختر الدور")]
+        public string Role { get; set; } = string.Empty;
+
+        [MinLength(6, ErrorMessage = "كلمة المرور يجب أن تكون على الأقل 6 حروف")]
+        public string? Password { get; set; }
+
+        public List<int> SelectedSectionIds { get; set; } = new();
+
+        public bool CanCloseOrder { get; set; } = false; // الصلاحية الجديدة
+    }
+
+    public class UserViewModel
+    {
+        public string Id { get; set; } = string.Empty;
+        public string Email { get; set; } = string.Empty;
+        public string? Role { get; set; }
+        public List<int> SelectedSectionIds { get; set; } = new();
+        public bool CanCloseOrder { get; set; } = false; // الصلاحية الجديدة
+    }
+}

@@ -1,0 +1,68 @@
+﻿@using Microsoft.AspNetCore.Identity
+@using TicketSystem.Data
+@inject UserManager<ApplicationUser> UserManager
+@inject DialogService DialogService
+
+
+<div dir="rtl" class="p-4 bg-light rounded shadow-sm" style="max-width: 400px; margin:auto; direction: rtl; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;">
+    <h5 class="mb-4 text-center text-primary fw-bold">تعديل أدوار المستخدم</h5>
+
+    <div class="mb-3">
+        @foreach (var role in AllRoles)
+        {
+            <div class="form-check form-switch mb-2">
+                <input type="checkbox" class="form-check-input" id="@role" @bind="RoleStates[role]" />
+                <label class="form-check-label" for="@role">@role</label>
+            </div>
+        }
+    </div>
+
+    <div class="d-flex justify-content-between mt-4">
+        <RadzenButton Text="إلغاء" ButtonStyle="ButtonStyle.Secondary" Click="Cancel" Style="min-width: 100px;" />
+        <RadzenButton Text="حفظ" Click="Save" Icon="save" ButtonStyle="ButtonStyle.Primary" Style="min-width: 100px;" />
+    </div>
+</div>
+@code {
+    [Parameter] public ApplicationUser User { get; set; }
+    [Parameter] public List<string> AllRoles { get; set; } = new();
+    [Parameter] public List<string> UserRoles { get; set; } = new();
+
+    private Dictionary<string, bool> RoleStates = new();
+
+    protected override void OnInitialized()
+    {
+        foreach (var role in AllRoles)
+        {
+            RoleStates[role] = UserRoles.Contains(role);
+        }
+    }
+
+    private async Task Save()
+    {
+        // تأكد من تحميل نسخة جديدة من المستخدم من الـ DbContext
+        var dbUser = await UserManager.FindByIdAsync(User.Id);
+        if (dbUser == null)
+        {
+             DialogService.Close(false);
+            return;
+        }
+
+
+
+        var currentRoles = await UserManager.GetRolesAsync(dbUser);
+
+        foreach (var role in RoleStates)
+        {
+            if (role.Value && !currentRoles.Contains(role.Key))
+                await UserManager.AddToRoleAsync(dbUser, role.Key);
+
+            if (!role.Value && currentRoles.Contains(role.Key))
+                await UserManager.RemoveFromRoleAsync(dbUser, role.Key);
+        }
+
+        DialogService.Close(true);
+    }
+
+
+    private void Cancel() => DialogService.Close(false);
+}

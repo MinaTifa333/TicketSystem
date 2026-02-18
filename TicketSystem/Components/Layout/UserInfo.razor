@@ -1,0 +1,239 @@
+﻿@* ==============UserInfo============ *@
+
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@using TicketSystem.Data
+@using TicketSystem.Dialogg
+@using TicketSystem.Model
+@inject NavigationManager NavigationManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject UserManager<ApplicationUser> UserManager
+@inject IJSRuntime JS
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+@inject CurrentUserModel UserContext
+@inject UserContextService UserContextService
+@inject DialogService DialogService
+@inject NotificationService1 NotificationService
+
+@implements IDisposable
+@rendermode InteractiveServer
+
+<!-- سكربتات -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="_content/Radzen.Blazor/Radzen.Blazor.js"></script>
+<audio id="notificationSound" src="/sound/notify.mp3" preload="auto"></audio>
+
+<!-- الشريط العلوي -->
+<div dir="ltr" class="navbar navbar-expand-lg bg-white shadow-sm no-print border-bottom">
+    <div class="container-fluid d-flex justify-content-between align-items-center px-3">
+        @if (!string.IsNullOrEmpty(Username))
+        {
+            <div class="d-flex align-items-center gap-3 text-dark flex-wrap">
+                <!-- أيقونة الجرس -->
+                <button class="btn btn-light position-relative me-3" @onclick="OpenAllNotifications">
+                    <i class="bi bi-bell fs-5"></i>
+                    @if (UnreadCount > 0)
+                    {
+                        <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger">
+                            @UnreadCount
+                        </span>
+                    }
+                </button>
+                @if (ShowPopup && Notifications.Any())
+                {
+                    <div class="notification-popup position-fixed bg-white shadow p-3 border rounded"
+                         style="top: 70px; right: 20px; z-index: 1050; max-width: 300px; width: 100%; animation: fadein 0.5s;">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <strong class="text-primary">إشعار جديد</strong>
+                            <button class="btn-close" @onclick="() => ShowPopup = false"></button>
+                        </div>
+
+                        @foreach (var noti in Notifications.Take(3))
+                        {
+                            <div class="alert alert-info py-2 px-3 mb-2 small border-start border-3 border-primary">
+                                <strong>@noti.Title</strong>
+                                <div>@noti.Message</div>
+                            </div>
+                        }
+
+                        <div class="text-center">
+                            <button class="btn btn-link text-decoration-none small" @onclick="OpenAllNotifications">
+                                عرض الكل <i class="bi bi-chevron-left"></i>
+                            </button>
+                        </div>
+                    </div>
+                }
+
+
+
+                <!-- صورة المستخدم -->
+                <div class="rounded-circle bg-primary text-white d-flex justify-content-center align-items-center"
+                     style="width: 36px; height: 36px; font-weight: bold; text-transform: uppercase;">
+                    @(Username?[..1].ToUpper())
+                </div>
+
+                <!-- اسم المستخدم -->
+                <span class="fw-semibold">@Username</span>
+
+
+            </div>
+
+
+
+        }
+    </div>
+</div>
+
+@code {
+    private string? Username;
+    private string? userId;
+    private List<(string Title, string Message)> Notifications = new();
+    private bool ShowPopup = false;
+    private int UnreadCount = 0;
+    private bool playSoundPending = false;
+
+    private System.Timers.Timer? _pollingTimer;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadUserAsync();
+        StartPolling();
+    }
+
+    private void StartPolling()
+    {
+        _pollingTimer = new System.Timers.Timer(10000); // كل 10 ثوانٍ
+        _pollingTimer.Elapsed += async (s, e) => await CheckNotifications();
+        _pollingTimer.AutoReset = true;
+        _pollingTimer.Start();
+    }
+
+    private async Task CheckNotifications()
+    {
+        if (UserContext.SectionId is null) return;
+
+        using var context = await DbFactory.CreateDbContextAsync();
+        var newNotis = await context.Notifications
+           .Where(n => n.TargetSectionId == UserContext.SectionId.ToString() && !n.IsRead)
+           .OrderByDescending(n => n.CreatedAt)
+           .ToListAsync();
+
+        if (newNotis.Any())
+        {
+            await InvokeAsync(() =>
+            {
+                Notifications = newNotis
+                    .Select(n => (n.Title, n.Message))
+                    .ToList();
+
+                UnreadCount = newNotis.Count;
+                ShowPopup = true;
+                JS.InvokeVoidAsync("playNotificationSound");
+                StateHasChanged();
+            });
+        }
+    }
+
+    private void ToggleNotifications() => ShowPopup = !ShowPopup;
+
+    private async Task OpenAllNotifications()
+    {
+        ShowPopup = false;
+
+        if (UserContext.SectionId != null)
+        {
+            await NotificationService.MarkAllAsReadAsync(UserContext.SectionId.Value);
+            UnreadCount = 0;
+        }
+
+        await DialogService.OpenAsync<AllNotificationsDialog>(
+            "كل الإشعارات",
+            null,
+            new DialogOptions { Width = "600px", Resizable = true }
+        );
+    }
+
+
+
+    [JSInvokable]
+    public async Task CloseNotificationPopup()
+    {
+        await InvokeAsync(() =>
+        {
+            ShowPopup = false;
+            StateHasChanged();
+        });
+    }
+
+
+    private async Task LoadUserAsync()
+    {
+        var appUser = await UserContextService.GetCurrentUserAsync();
+
+        if (appUser is null)
+            return;
+
+        Username = appUser.UserName;
+        userId = appUser.Id;
+
+        // استخدام GetUserSectionIdsAsync() بطريقة آمنة من التعارض
+        var sectionId = await UserContextService.GetFirstSectionIdAsync();
+
+        UserContext.UserId = appUser.Id;
+        UserContext.UserName = appUser.UserName;
+        UserContext.Email = appUser.Email?.ToLower().Trim();
+        UserContext.SectionId = sectionId;
+
+        if (sectionId.HasValue)
+        {
+            using var context = await DbFactory.CreateDbContextAsync();
+            UnreadCount = await context.Notifications
+                .CountAsync(n => n.TargetSectionId == sectionId.Value.ToString() && !n.IsRead);
+        }
+    }
+
+    public void Dispose() => _pollingTimer?.Dispose();
+}
+
+<script>
+    function registerClickOutside(dotnetHelper) {
+        document.addEventListener("click", function (e) {
+            if (!e.target.closest(".notification-popup") && !e.target.closest(".bi-bell")) {
+                dotnetHelper.invokeMethodAsync("CloseNotificationPopup");
+            }
+        });
+    }
+
+    function playNotificationSound() {
+        document.getElementById("notificationSound")?.play();
+    }
+        
+
+
+    .notification-popup {
+        transition: all 0.3s ease-in-out;
+    }
+
+</script>
+
+<style>
+    @@media (max-width: 768px) {
+        .notification-popup {
+            right: 5px !important;
+            left: 5px !important;
+            max-width: 100% !important;
+        }
+    }
+
+    @@keyframes fadein {
+        from {
+            opacity: 0;
+            transform: translateY(-10px);
+        }
+
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+</style>

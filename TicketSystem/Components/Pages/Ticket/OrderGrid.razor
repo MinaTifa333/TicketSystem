@@ -1,0 +1,561 @@
+﻿@page "/order-list"
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@using TicketSystem.Data
+@using TicketSystem.Dialogg
+@using TicketSystem.TSModel
+@inject OrderService OrderService
+@using OrderModel = TicketSystem.TSModel.Order
+@using OrderDetailModel = TicketSystem.TSModel.OrderDetail
+@inject DialogService DialogService
+@inject AuthenticationStateProvider AuthStateProvider
+@inject UserManager<ApplicationUser> UserManager
+@inject IDbContextFactory<ApplicationDbContext> ContextFactory
+@inject IJSRuntime JS
+@rendermode InteractiveServer
+
+<div class="d-flex justify-content-between align-items-center mb-4 border-bottom pb-2">
+    <h3 class="text-primary m-0">
+        <i class="fas fa-list-alt me-2"></i> قائمة الطلبات
+    </h3>
+    <RadzenButton Icon="star" Text="نقاطي"
+                  Click="ShowRatesForUser"
+                  Disabled="@isLoading"
+                  Class="btn btn-outline-success rounded-pill px-3" />
+
+    <div class="d-flex align-items-center gap-2">
+        <RadzenButton Icon="refresh" Text="تحديث"
+                      Click="ReloadOrders"
+                      Disabled="@isLoading"
+                      Class="btn btn-outline-primary rounded-pill px-3" />
+        <RadzenButton Icon="add_circle_outline" Text="طلب جديد"
+                      Click="AddOrder"
+                      Disabled="@isLoading"
+                      Class="btn btn-primary rounded-pill px-4" />
+    </div>
+</div>
+
+<div class="d-flex flex-wrap gap-3 mb-3 align-items-end">
+
+    <!-- قسم الفلترة الرئيسية -->
+    <div class="d-flex flex-wrap gap-2 align-items-center">
+        <span class="fw-semibold text-secondary">عرض حسب القسم:</span>
+        <RadzenDropDown @bind-Value="sectionId"
+                        Data="userSections"
+                        TextProperty="Name"
+                        ValueProperty="Id"
+                        Style="width:200px"
+                        Placeholder="اختر القسم"
+                        Change="OnSectionChanged" />
+
+        <span class="fw-semibold text-secondary">عرض حسب الحالة:</span>
+        <RadzenDropDown @bind-Value="selectedStatus"
+                        Data="statusOptions"
+                        TextProperty="Text"
+                        ValueProperty="Value"
+                        Style="width:200px"
+                        Placeholder="اختر الحالة"
+                        Change="OnStatusChanged"
+                        Class="form-select center-dropdown-items"
+                        dir="ltr" />
+
+        <span class="fw-semibold text-secondary">نوع الطلب:</span>
+        <RadzenDropDown @bind-Value="selectedType"
+                        Data="typeOptions"
+                        TextProperty="Text"
+                        ValueProperty="Value"
+                        Style="width:150px"
+                        Placeholder="الكل"
+                        Change="OnTypeChanged" />
+    </div>
+
+    <!-- قسم البحث العام -->
+    <div class="d-flex flex-wrap gap-2 align-items-center">
+        <span class="fw-semibold text-secondary">بحث:</span>
+        <input type="text" class="form-control" style="width:300px"
+               placeholder="اسم العميل، الهاتف، الرقم القومي ، رقم الطلب"
+               @bind="searchText"
+               @bind:event="oninput" />
+        <RadzenButton Icon="search" Text="بحث"
+                      Click="ReloadOrders"
+                      Disabled="@isLoading"
+                      Class="btn btn-outline-primary rounded-pill px-3" />
+    </div>
+
+    <!-- قسم البحث في الملاحظات -->
+    <div class="d-flex flex-wrap gap-2 align-items-center">
+        <span class="fw-semibold text-secondary">بحث في الملاحظات:</span>
+        <input type="text" class="form-control" style="width:200px"
+               placeholder="أدخل نص الملاحظة"
+               @bind="notesSearchText"
+               @bind:event="oninput" />
+        <RadzenButton Icon="search" Text="بحث"
+                      Click="ReloadOrders"
+                      Disabled="@isLoading"
+                      Class="btn btn-outline-primary rounded-pill px-3" />
+    </div>
+
+</div>
+
+@if (isLoading)
+{
+    <div class="text-center my-5">
+        <div class="spinner-border text-primary" role="status" style="width:3rem; height:3rem;">
+            <span class="visually-hidden">جار التحميل...</span>
+        </div>
+        <div class="mt-2 text-muted">جار تحميل البيانات...</div>
+    </div>
+}
+else
+{
+    <RadzenDataGrid @ref="ordersGrid"
+                    TItem="OrderModel"
+                    Data="@orders"
+                    AllowPaging="true"
+                    PageSize="10"
+                    AllowFiltering="true"
+                    AllowSorting="true"
+                    FilterCaseSensitivity="FilterCaseSensitivity.CaseInsensitive"
+                    ExpandMode="DataGridExpandMode.Single"
+                    ShowExpandColumn="true"
+                    Class="shadow-sm border rounded">
+
+        <Columns>
+
+            <RadzenDataGridColumn TItem="OrderModel" Property="Id" Title="#" Width="50px" />
+            <RadzenDataGridColumn TItem="OrderModel" Property="CreatedBy" Title="أنشئ بواسطة" />
+            <RadzenDataGridColumn TItem="OrderModel" Title="تاريخ الإنشاء">
+                <Template Context="order">@order.DateTime?.ToString("yyyy/MM/dd HH:mm")</Template>
+            </RadzenDataGridColumn>
+            <RadzenDataGridColumn TItem="OrderModel" Property="Section.Name" Title="القسم" />
+            <RadzenDataGridColumn TItem="OrderModel" Property="LastDepartment" Title="آخر قسم" />
+            <RadzenDataGridColumn TItem="OrderModel" Property="RepeateFactor" Title="عامل التكرار" Width="130px" />
+            <RadzenDataGridColumn TItem="OrderModel" Title="نوع الطلب" Width="130px">
+                <Template Context="order">
+                    @if (order.ExternalDetail != null)
+                    {
+                        <span class="badge bg-info">خارجي</span>
+                    }
+                    else
+                    {
+                        <span class="badge bg-secondary">داخلي</span>
+                    }
+                </Template>
+            </RadzenDataGridColumn>
+            <RadzenDataGridColumn TItem="OrderModel" Title="الحالة" Width="100px">
+                <Template Context="order">
+                    @if (order.Closed == true)
+                    {
+                        <span class="badge bg-danger me-2"><i class="bi bi-lock-fill me-1"></i> مغلق</span>
+                    }
+                    else
+                    {
+                        <span class="badge bg-success me-2"><i class="bi bi-unlock-fill me-1"></i> مفتوح</span>
+                    }
+                </Template>
+            </RadzenDataGridColumn>
+            <RadzenDataGridColumn TItem="OrderModel" Title="الإجراءات" Width="150px">
+                <Template Context="order">
+                    <div class="d-flex align-items-center gap-2 flex-wrap">
+                        <RadzenButton Icon="info" ButtonStyle="ButtonStyle.Info"
+                                      Click="@(() => ShowDetails(order))"
+                                      Tooltip="عرض التفاصيل" />
+                        <RadzenButton Icon="attach_file" ButtonStyle="ButtonStyle.Warning"
+                                      Click="@(() => ShowAttachments(order))"
+                                      Tooltip="عرض المرفقات" />
+                        <RadzenButton Icon="add_circle"
+                                      ButtonStyle="@(order.Closed == true ? ButtonStyle.Secondary : ButtonStyle.Success)"
+                                      Class="@(order.Closed == true ? "opacity-50" : "")"
+                                      Click="@(() => AddDetail(order))"
+                                      Disabled="@(order.Closed == true)"
+                                      Tooltip="إضافة تفصيلة" />
+                    </div>
+                </Template>
+            </RadzenDataGridColumn>
+        </Columns>
+
+        <Template Context="order">
+            @if (order.ExternalDetail != null)
+            {
+                <div class="p-2 mb-2 border rounded" style="border-color:#17a2b8; background-color:#e6f7ff; font-size:0.9rem; display:flex; flex-wrap:wrap; gap:15px; align-items:center;">
+                    <strong class="text-info me-2">بيانات العميل:</strong>
+                    <span><i class="bi bi-person-fill text-info me-1"></i><strong>الاسم:</strong> @order.ExternalDetail.Name</span>
+                    <span><i class="bi bi-telephone-fill text-info me-1"></i><strong>الهاتف:</strong> @order.ExternalDetail.Phone</span>
+                    <span><i class="bi bi-credit-card-2-front-fill text-info me-1"></i><strong>الرقم القومي:</strong> @order.ExternalDetail.Nid</span>
+                </div>
+            }
+
+            @if (order.OrderDetails?.Any() == true)
+            {
+                <RadzenDataGrid TItem="OrderDetailModel"
+                                Data="@order.OrderDetails"
+                                AllowPaging="false"
+                                ShowPagingSummary="false"
+                                Class="table table-sm table-bordered table-striped mt-2">
+                    <Columns>
+                        <RadzenDataGridColumn TItem="OrderDetailModel" Property="FromDep" Title="من قسم" />
+                        <RadzenDataGridColumn TItem="OrderDetailModel" Property="ToDepartment" Title="إلى قسم" />
+                        <RadzenDataGridColumn TItem="OrderDetailModel" Property="Amount" Title="المبلغ" />
+                        <RadzenDataGridColumn TItem="OrderDetailModel" Title="يحتاج موافقة">
+                            <Template Context="detail">@(detail.NeedApproval ? "نعم" : "لا")</Template>
+                        </RadzenDataGridColumn>
+                        <RadzenDataGridColumn TItem="OrderDetailModel" Title="ملاحظات">
+                            <Template Context="detail">
+                                <div style="display: flex; align-items: center;">
+                                    <div style="flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px;">
+                                        @if (string.IsNullOrWhiteSpace(detail.Notes))
+                                        {
+                                            <span class="text-muted">
+                                                <i class="material-icons" style="font-size:16px; vertical-align: middle;">info</i>
+                                                لا توجد ملاحظة
+                                            </span>
+                                        }
+                                        else
+                                        {
+                                            @detail.Notes
+                                        }
+                                    </div>
+                                    <div style="display: flex; align-items: center; justify-content: flex-start;">
+                                        @if (!string.IsNullOrWhiteSpace(detail.Notes))
+                                        {
+                                            <RadzenButton Icon="description"
+                                                          Size="Radzen.ButtonSize.Small"
+                                                          ButtonStyle="ButtonStyle.Light"
+                                                          Style="width: 36px; height: 36px; padding: 0; margin-left: auto;"
+                                                          Click="@(() => ShowNotes(detail.Notes))"
+                                                          class="note-icon-btn"
+                                                          Tooltip="عرض الملاحظة"
+                                                          title="عرض الملاحظة" />
+                                        }
+                                    </div>
+                                </div>
+                            </Template>
+                        </RadzenDataGridColumn>
+                        <RadzenDataGridColumn TItem="OrderDetailModel" Property="CreatedBy" Title="بواسطة" />
+                        <RadzenDataGridColumn TItem="OrderDetailModel" Title="تاريخ الإنشاء">
+                            <Template Context="detail">@detail.CreationDate.ToString("yyyy/MM/dd HH:mm")</Template>
+                        </RadzenDataGridColumn>
+                    </Columns>
+                </RadzenDataGrid>
+                @if (order.OrderDetails?.Sum(d => d.Amount) > 0)
+                {
+                    <div class="mt-2 text-end fw-bold text-primary">
+                        المجموع: @order.OrderDetails.Sum(d => d.Amount) جنيه
+                    </div>
+                }
+            }
+            else
+            {
+                <div class="text-muted p-3">لا توجد تفاصيل لهذا الطلب</div>
+            }
+        </Template>
+    </RadzenDataGrid>
+}
+
+<style>
+    .center-dropdown-items .rz-dropdown-label {
+        text-align: center;
+    }
+    .center-dropdown-items .rz-listbox-item {
+        text-align: center;
+    }
+    .note-icon-btn {
+        border-radius: 50% !important;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+        transition: background-color 0.2s ease-in-out, transform 0.2s;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    .note-icon-btn:hover {
+        background-color: #e3f2fd !important;
+        transform: scale(1.1);
+    }
+    .note-icon-btn .rz-button-icon {
+        font-size: 18px !important;
+        color: #1976d2;
+    }
+</style>
+
+@code {
+    private List<OrderModel> orders = new();
+    private int? sectionId;
+    private string selectedStatus = "all";
+    private string selectedType = "all";
+    private string searchText = "";
+    private bool canCloseOrder = false;
+    private bool isLoading = false;
+    private List<Section> userSections = new();
+    private string notesSearchText = "";
+
+    private List<StatusOption> statusOptions = new()
+    {
+        new StatusOption { Text = "عرض الكل", Value = "all" },
+        new StatusOption { Text = "مفتوح", Value = "open" },
+        new StatusOption { Text = "مغلق", Value = "closed" }
+    };
+    private List<StatusOption> typeOptions = new()
+    {
+        new StatusOption { Text = "الكل", Value = "all" },
+        new StatusOption { Text = "داخلي", Value = "internal" },
+        new StatusOption { Text = "خارجي", Value = "external" }
+    };
+    private bool _firstRender = true;
+    private RadzenDataGrid<OrderModel> ordersGrid;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var userId = UserManager.GetUserId(authState.User);
+        if (string.IsNullOrWhiteSpace(userId)) { await DialogService.Alert("حدث خطأ أثناء جلب بيانات المستخدم.", "خطأ"); return; }
+
+        await using var db = await ContextFactory.CreateDbContextAsync();
+        var appUser = await db.Users.Where(u => u.Id == userId).Select(u => new { u.Id, u.CanCloseOrder }).FirstOrDefaultAsync();
+        if (appUser != null) canCloseOrder = appUser.CanCloseOrder;
+
+        userSections = await db.UserSections.Where(x => x.UserId == userId).Select(x => x.Section).ToListAsync();
+        if (!userSections.Any()) { await DialogService.Alert("المستخدم غير مرتبط بأي قسم.", "خطأ"); return; }
+        sectionId = userSections.First().Id;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && _firstRender)
+        {
+            _firstRender = false;
+            await ReloadOrders();
+        }
+    }
+
+    private async Task ReloadOrders()
+    {
+        if (sectionId == null) return;
+        try
+        {
+            isLoading = true; await InvokeAsync(StateHasChanged);
+            var allOrders = await OrderService.GetAllAsync(sectionId.Value);
+
+            // فلترة حسب الحالة
+            var filtered = selectedStatus switch
+            {
+                "open" => allOrders.Where(o => o.Closed != true),
+                "closed" => allOrders.Where(o => o.Closed == true),
+                _ => allOrders
+            };
+
+            // فلترة حسب النوع (داخلي/خارجي)
+            filtered = selectedType switch
+            {
+                "internal" => filtered.Where(o => o.ExternalDetail == null),
+                "external" => filtered.Where(o => o.ExternalDetail != null),
+                _ => filtered
+            };
+
+            // فلترة البحث التلقائي
+            // فلترة البحث التلقائي
+            if (!string.IsNullOrWhiteSpace(searchText))
+            {
+                var lower = searchText.Trim().ToLower();
+
+                filtered = filtered.Where(o =>
+                // البحث برقم الطلب
+                o.Id.ToString().Contains(lower)
+
+                // الطلب الخارجي
+                || (o.ExternalDetail != null &&
+                    (o.ExternalDetail.Name?.ToLower().Contains(lower) == true ||
+                     o.ExternalDetail.Phone?.ToLower().Contains(lower) == true ||
+                     o.ExternalDetail.Nid?.ToLower().Contains(lower) == true))
+
+                // الطلب الداخلي
+                || (o.OrderDetails != null &&
+                    o.OrderDetails.Any(d =>
+                        (d.FromDep?.ToLower().Contains(lower) == true) ||
+                        (d.ToDepartment?.ToLower().Contains(lower) == true) ||
+                        (d.CreatedBy?.ToLower().Contains(lower) == true)
+                    ))
+            );
+            }
+
+            if (!string.IsNullOrWhiteSpace(notesSearchText))
+            {
+                var lowerNotes = notesSearchText.Trim().ToLower();
+                filtered = filtered.Where(o =>
+                o.OrderDetails != null &&
+                o.OrderDetails.Any(d => !string.IsNullOrWhiteSpace(d.Notes) &&
+                                        d.Notes.ToLower().Contains(lowerNotes))
+            );
+            }
+
+
+            orders = filtered.ToList();
+        }
+        finally
+        {
+            isLoading = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task OnStatusChanged(object value)
+    {
+        selectedStatus = value?.ToString() ?? "all";
+        await ReloadOrders();
+    }
+
+    private async Task OnTypeChanged(object value)
+    {
+        selectedType = value?.ToString() ?? "all";
+        await ReloadOrders();
+    }
+
+    private async Task OnSectionChanged(object value)
+    {
+        sectionId = (int?)value;
+        await ReloadOrders();
+    }
+
+    void ShowNotes(string notes)
+    {
+        DialogService.Open("ملاحظات",
+        ds => @<div style="padding:20px; white-space:pre-wrap">@notes</div>,
+        new DialogOptions() { Width = "600px", Height = "auto", CloseDialogOnOverlayClick = true });
+    }
+
+    void ShowDetails(OrderModel order) => DialogService.Open<OrderDetailsDialog>("تفاصيل الطلب",
+        new Dictionary<string, object> { ["OrderId"] = order.Id },
+        new DialogOptions { Width = "950px", Height = "auto", Resizable = true });
+
+    private async Task ShowAttachments(OrderModel order)
+    {
+        if (order?.OrderDetails == null)
+        {
+            await DialogService.Alert("لا توجد مرفقات لهذا الطلب.", "تنبيه");
+            return;
+        }
+
+        var attachments = order.OrderDetails
+            .Where(x => !string.IsNullOrWhiteSpace(x.Attachment))
+            .SelectMany(x => x.Attachment.Split(',', StringSplitOptions.RemoveEmptyEntries))
+            .Distinct()
+            .ToList();
+
+        var attachmentString = attachments.Any()
+            ? string.Join(",", attachments)
+            : "";
+
+        await DialogService.OpenAsync<OrderAttachmentsDialog>(
+            "المرفقات",
+            new Dictionary<string, object> { ["AttachmentString"] = attachmentString },
+            new DialogOptions { Width = "700px", Resizable = true });
+    }
+
+    private async Task AddDetail(OrderModel order)
+    {
+        if (!string.IsNullOrWhiteSpace(order.LastDepartment))
+        {
+            var userSectionNames = userSections.Select(s => s.Name).ToList();
+            if (!userSectionNames.Contains(order.LastDepartment))
+            {
+                await DialogService.Alert(
+                    $"الطلب موجود للقسم\"{order.LastDepartment}\" .",
+                    "تنبيه"
+                );
+                return;
+            }
+        }
+
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        var userName = user?.Identity?.Name ?? "مستخدم غير معروف";
+
+        var result = await DialogService.OpenAsync<OrderDetailForm>(
+            "إضافة تفصيلة",
+            new Dictionary<string, object>
+                {
+                    ["detail"] = new OrderDetail
+                    {
+                        OrderId = order.Id,
+                        CreatedBy = userName,
+                        CreationDate = DateTime.Now,
+                        PcName = order.PcName,
+                        FromDep = order.Section?.Name ?? string.Empty
+                    },
+                    ["sectionId"] = order.SectionId
+                },
+            new DialogOptions { Width = "800px", Height = "auto", Resizable = true });
+
+        if (result is OrderDetail)
+        {
+            await ReloadOrders(); // << هنا التحديث
+        }
+    }
+
+    private async Task AddOrder()
+    {
+        var result = await DialogService.OpenAsync<OrderForm>(
+            "طلب جديد",
+            new Dictionary<string, object>(),
+            new DialogOptions { Width = "900px", Height = "auto", Resizable = true });
+
+        // لو الــ dialog اتقفل بدون نتيجة
+        if (result == null)
+        {
+            // ممكن يكون المستخدم غلق الفورم بدون حفظ
+            return;
+        }
+
+        // الحالة الأمثل: الـ OrderForm يرجع OrderModel مع Id
+        if (result is OrderModel created && created.Id > 0)
+        {
+            // حاول تجيب الـ order كامل من السيرفر (عشان تجيب الـ navigation props مثل OrderDetails, Section,...)
+            var fullOrder = await OrderService.GetByIdAsync(created.Id);
+
+            // لو لقيته حطّه في بداية القائمة وحدّث الجدول
+            if (fullOrder != null)
+            {
+                orders.Insert(0, fullOrder);
+                if (ordersGrid != null)
+                {
+                    await ordersGrid.Reload();
+                }
+                else
+                {
+                    await InvokeAsync(StateHasChanged);
+                }
+                return;
+            }
+
+            // لو ما لقيناش الطلب فوراً، اعمل Reload شامل كحل احتياطي
+            await ReloadOrders();
+            return;
+        }
+
+        // لو الـ dialog رجع نوع تاني (مثلاً true/false) — تعامَل معاه:
+        if (result is bool ok && ok)
+        {
+            await ReloadOrders();
+            return;
+        }
+
+        // افتراضياً: حمل البيانات من السيرفر
+        await ReloadOrders();
+    }
+
+
+
+    private async Task ShowRatesForUser()
+    {
+        await DialogService.OpenAsync<UserRatesDialog>(
+            "نقاط القسم",
+            new Dictionary<string, object>(),
+            new DialogOptions { Width = "800px", Height = "auto", Resizable = true });
+    }
+
+
+    public class StatusOption
+    {
+        public string Text { get; set; } = "";
+        public string Value { get; set; } = "";
+    }
+}

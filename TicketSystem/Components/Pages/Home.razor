@@ -1,0 +1,376 @@
+﻿@page "/"
+@rendermode InteractiveServer
+
+@using Microsoft.AspNetCore.Components.Authorization
+@using Radzen
+@using Radzen.Blazor
+@using TicketSystem.Components.Pages.Dashboard
+@using TicketSystem.Model
+@using TicketSystem.TSModel
+@inject AuthenticationStateProvider Auth
+@inject UserContextService UserContext
+@inject SectionService SectionService
+@inject OrderService OrderService
+@inject OrderFixedService OrderFixedService
+@inject TicketSystem.Services.WPX.RawDataService RawDataService
+@inject DialogService DialogService
+@inject NavigationManager Nav
+
+<PageTitle>لوحة التحكم</PageTitle>
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css" />
+
+<div class="container py-4 dashboard-page">
+    @if (!isAuthenticated)
+    {
+        <div class="text-center my-5 animate__animated animate__fadeInDown">
+            <img src="images/Logo/Logo.png" alt="Logo" class="img-fluid" style="max-width: 280px; height: auto;" />
+            <h5 class="text-muted mt-4">الرجاء تسجيل الدخول للوصول إلى لوحة التحكم.</h5>
+            <NavLink class="btn btn-outline-primary mt-3 btn-animated" href="Account/Login">
+                <i class="bi bi-box-arrow-in-right"></i> تسجيل الدخول
+            </NavLink>
+        </div>
+    }
+    else if (isLoading)
+    {
+        <div class="d-flex justify-content-center my-5 animate__animated animate__pulse animate__infinite">
+            <RadzenProgressBar Mode="ProgressBarMode.Indeterminate" />
+        </div>
+    }
+    else
+    {
+        <!-- شريط أدوات -->
+        <div class="row g-3 align-items-end mb-3 animate__animated animate__fadeInDown">
+            <div class="col-12 col-md-4">
+                @if (userSections?.Count > 1)
+                {
+                    <RadzenDropDown TValue="int?" Data="@userSections" @bind-Value="selectedSectionId"
+                                    TextProperty="Name" ValueProperty="Id" Style="width:100%"
+                                    Change="@OnSectionChanged" Placeholder="اختر القسم" />
+                }
+                else
+                {
+                    <RadzenTextBox ReadOnly="true" Style="width:100%" Value="@userSections.FirstOrDefault()?.Name" />
+                }
+            </div>
+
+            <div class="col-6 col-md-2">
+                <RadzenDropDown TValue="string" Data="@timePeriods" @bind-Value="selectedPeriod"
+                                Change="@(args => OnPeriodChanged(args?.ToString()))" Style="width:100%" />
+            </div>
+
+            @if (selectedPeriod == "custom")
+            {
+                <div class="col-6 col-md-2">
+                    <RadzenDatePicker @bind-Value="dateFrom" DateFormat="yyyy-MM-dd" Style="width:100%" Change="@(args=>OnPeriodChanged("custom"))" />
+                </div>
+                <div class="col-6 col-md-2">
+                    <RadzenDatePicker @bind-Value="dateTo" DateFormat="yyyy-MM-dd" Style="width:100%" Change="@(args=>OnPeriodChanged("custom"))" />
+                </div>
+            }
+
+            <div class="col-6 col-md-2 d-flex gap-2">
+                <RadzenButton Icon="refresh" Text="تحديث" Click="Reload" ButtonStyle="Radzen.ButtonStyle.Primary" Class="w-130 btn-animated" />
+            </div>
+        </div>
+
+        <!-- بطاقات -->
+        <div class="row g-3 mb-4">
+            <div class="col-12 col-sm-6 col-lg-3">
+                <RadzenCard class="dashboard-card gradient-blue animate__animated animate__zoomIn">
+                    <i class="bi bi-list-task fs-2 text-white pulse"></i>
+                    <h6 class="mt-2 text-white">إجمالي الطلبات</h6>
+                    <h4 class="fw-bold text-white">@filteredOrders.Count</h4>
+                </RadzenCard>
+            </div>
+            <div class="col-12 col-sm-6 col-lg-3">
+                <RadzenCard class="dashboard-card gradient-pink animate__animated animate__zoomIn animate__delay-1s">
+                    <i class="bi bi-folder2-open fs-2 text-white bounce"></i>
+                    <h6 class="mt-2 text-white">طلبات مفتوحة</h6>
+                    <h4 class="fw-bold text-white">@openOrders</h4>
+                </RadzenCard>
+            </div>
+            <div class="col-12 col-sm-6 col-lg-3">
+                <RadzenCard class="dashboard-card gradient-green animate__animated animate__zoomIn animate__delay-2s">
+                    <i class="bi bi-check2-square fs-2 text-white"></i>
+                    <h6 class="mt-2 text-white">طلبات مغلقة</h6>
+                    <h4 class="fw-bold text-white">@closedOrders</h4>
+                </RadzenCard>
+            </div>
+            <div class="col-12 col-sm-6 col-lg-3">
+                <RadzenCard class="dashboard-card gradient-gray animate__animated animate__zoomIn animate__delay-3s">
+                    <i class="bi bi-star-half fs-2 text-white"></i>
+                    <h6 class="mt-2 text-white">إجمالي النقاط</h6>
+                    <h4 class="fw-bold text-white">@totalPointsForSection</h4>
+                </RadzenCard>
+            </div>
+        </div>
+
+        <!-- المخططات -->
+        <div class="row g-3 mb-4">
+            <div class="col-12 col-lg-6 animate__animated animate__fadeInLeft">
+                <h5 class="mb-2 text-secondary"><i class="bi bi-pie-chart-fill"></i> توزيع الطلبات</h5>
+                <RadzenChart @key="ordersChartKey" Style="height: 300px;" Class="chart-box">
+                    <RadzenPieSeries Data="@orderStatusChart" CategoryProperty="Label" ValueProperty="Value" />
+                </RadzenChart>
+            </div>
+            <div class="col-12 col-lg-6 animate__animated animate__fadeInRight">
+                <h5 class="mb-2 text-secondary"><i class="bi bi-bar-chart"></i> نقاط القسم</h5>
+                <RadzenChart @key="pointsChartKey" Style="height: 300px;" Class="chart-box">
+                    <RadzenColumnSeries Data="@pointsByDay" CategoryProperty="Label" ValueProperty="Value" />
+                    <RadzenCategoryAxis />
+                    <RadzenValueAxis />
+                </RadzenChart>
+            </div>
+        </div>
+        <MonthlySectionReport/>
+        <!-- آخر الطلبات -->
+        <h5 class="mb-2 text-secondary animate__animated animate__fadeInUp"><i class="bi bi-clock-history"></i> آخر الطلبات</h5>
+        @if (filteredOrders.Any())
+        {
+            <RadzenDataGrid Data="@filteredOrders.Take(10)" TItem="Order" RowHover="true"
+                            Class="shadow-sm border rounded bg-white animate__animated animate__fadeInUp"
+                            Style="min-height: 120px;">
+                <Columns>
+                    <RadzenDataGridColumn TItem="Order" Property="Id" Title="#" Width="70px" />
+                    <RadzenDataGridColumn TItem="Order" Title="القسم">
+                        <Template Context="o">@o.Section?.Name</Template>
+                    </RadzenDataGridColumn>
+                    <RadzenDataGridColumn TItem="Order" Title="التاريخ">
+                        <Template Context="o">@o.DateTime?.ToString("yyyy-MM-dd HH:mm")</Template>
+                    </RadzenDataGridColumn>
+                    <RadzenDataGridColumn TItem="Order" Title="الحالة">
+                        <Template Context="o">
+                            @if (o.Closed == true)
+                            {
+                                <span class="badge bg-danger">مغلق</span>
+                            }
+                            else
+                            {
+                                <span class="badge bg-success">مفتوح</span>
+                            }
+                        </Template>
+                    </RadzenDataGridColumn>
+                    <RadzenDataGridColumn TItem="Order" Title="إجراءات" Width="140px">
+                        <Template Context="o">
+                            <RadzenButton Text="تفاصيل" Click="@(()=> ShowOrderDetails(o.Id))"
+                                          Icon="article" Class="btn-animated" />
+                        </Template>
+                    </RadzenDataGridColumn>
+                </Columns>
+            </RadzenDataGrid>
+        }
+        else
+        {
+            <p class="text-muted">لا توجد طلبات ضمن الفترة المحددة.</p>
+        }
+    }
+</div>
+
+
+@code {
+    bool isLoading = true;
+    bool isAuthenticated = false;
+
+    List<Section> userSections = new();
+    int? selectedSectionId;
+    string? selectedSectionName;
+
+    string selectedPeriod = "last7";
+    readonly List<string> timePeriods = new() { "today", "last7", "last30", "thisMonth", "thisYear", "custom" };
+    DateTime dateFrom = DateTime.Today.AddDays(-6);
+    DateTime dateTo = DateTime.Today;
+
+    List<Order> allOrdersForSection = new();
+    List<Order> filteredOrders = new();
+    int openOrders = 0;
+    int closedOrders = 0;
+    int totalPointsForSection = 0;
+
+    List<ChartPoint> ordersByDay = new();
+    List<ChartPoint> orderStatusChart = new();
+    List<ChartPoint> pointsByDay = new();
+
+    int ordersChartKey = 0;
+    int pointsChartKey = 0;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await Auth.GetAuthenticationStateAsync();
+        isAuthenticated = authState.User.Identity?.IsAuthenticated == true;
+        if (!isAuthenticated) return;
+
+        isLoading = true;
+
+        var sectionIds = await UserContext.GetUserSectionIdsAsync();
+        var allSections = await SectionService.GetAllAsync();
+        userSections = allSections.Where(s => sectionIds.Contains(s.Id)).ToList();
+        var firstSection = userSections.FirstOrDefault();
+        selectedSectionId = firstSection?.Id;
+        selectedSectionName = firstSection?.Name;
+
+
+
+        ApplyPeriodPreset(selectedPeriod);
+
+        if (selectedSectionId != null)
+        {
+            await LoadDataForSection(selectedSectionId.Value);
+            BuildVisuals();
+        }
+
+        isLoading = false;
+    }
+
+    async Task OnSectionChanged(object value)
+    {
+        if (value is int sectionId)
+        {
+            selectedSectionId = sectionId;
+            selectedSectionName = userSections.FirstOrDefault(s => s.Id == sectionId)?.Name;
+
+            isLoading = true;
+            StateHasChanged();
+
+            await LoadDataForSection(sectionId);
+            BuildVisuals();
+
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    async Task OnPeriodChanged(string? value)
+    {
+        selectedPeriod = value ?? "last7";
+        ApplyPeriodPreset(selectedPeriod);
+
+        if (selectedSectionId != null)
+        {
+            isLoading = true;
+            StateHasChanged();
+
+            await LoadDataForSection(selectedSectionId.Value);
+            BuildVisuals();
+
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    void ApplyPeriodPreset(string preset)
+    {
+        var today = DateTime.Today;
+        switch (preset)
+        {
+            case "today": dateFrom = dateTo = today; break;
+            case "last7": dateFrom = today.AddDays(-6); dateTo = today; break;
+            case "last30": dateFrom = today.AddDays(-29); dateTo = today; break;
+            case "thisMonth": dateFrom = new DateTime(today.Year, today.Month, 1); dateTo = today; break;
+            case "thisYear": dateFrom = new DateTime(today.Year, 1, 1); dateTo = today; break;
+            case "custom": if (dateFrom > dateTo) (dateFrom, dateTo) = (dateTo, dateFrom); break;
+            default: dateFrom = today.AddDays(-6); dateTo = today; break;
+        }
+    }
+
+    async Task Reload()
+    {
+        if (selectedSectionId == null) return;
+        await LoadDataForSection(selectedSectionId.Value);
+        BuildVisuals();
+    }
+
+    async Task LoadDataForSection(int sectionId)
+    {
+        allOrdersForSection = await OrderService.GetAllAsync(sectionId);
+        selectedSectionName = (await SectionService.GetByIdAsync(sectionId))?.Name?.Trim();
+
+        // تصفية الطلبات حسب الفترة
+        filteredOrders = allOrdersForSection
+            .Where(o => o.DateTime != null && o.DateTime.Value.Date >= dateFrom.Date && o.DateTime.Value.Date <= dateTo.Date)
+            .OrderByDescending(o => o.DateTime)
+            .ToList();
+
+        openOrders = filteredOrders.Count(o => o.Closed == false);
+        closedOrders = filteredOrders.Count(o => o.Closed == true);
+
+        // الحصول على البيانات الخام
+        var raws = await RawDataService.GetAllRawDataAsync();
+        var targetName = selectedSectionName?.ToLower() ?? string.Empty;
+
+        // حساب إجمالي النقاط
+        totalPointsForSection = raws
+            .Where(r => r.FromDepartmentRate != null
+                     && r.FromDepartmentRate.Trim().ToLower() == targetName
+                     && r.DateTimeClosed.Date >= dateFrom.Date
+                     && r.DateTimeClosed.Date <= dateTo.Date)
+            .Sum(r => r.TotalRate);
+
+        // نقاط كل يوم
+        pointsByDay = Enumerable.Range(0, (dateTo.Date - dateFrom.Date).Days + 1)
+            .Select(i => dateFrom.Date.AddDays(i))
+            .Select(d => new ChartPoint
+                {
+                    Label = d.ToString("dd/MM"),
+                    Value = raws
+                        .Where(r => r.FromDepartmentRate != null
+                                 && r.FromDepartmentRate.Trim().ToLower() == targetName
+                                 && r.DateTimeClosed.Date == d)
+                        .Sum(r => r.TotalRate)
+                }).ToList();
+    }
+
+    void BuildVisuals()
+    {
+        var days = Enumerable.Range(0, (dateTo.Date - dateFrom.Date).Days + 1)
+                             .Select(i => dateFrom.Date.AddDays(i));
+        ordersByDay = days.Select(d => new ChartPoint
+            {
+                Label = d.ToString("dd/MM"),
+                Value = filteredOrders.Count(o => o.DateTime != null && o.DateTime.Value.Date == d)
+            }).ToList();
+
+        orderStatusChart = new()
+        {
+            new ChartPoint { Label = "مفتوحة", Value = openOrders },
+            new ChartPoint { Label = "مغلقة", Value = closedOrders },
+        };
+
+        // تحديث المفاتيح لإعادة رسم المخططات
+        ordersChartKey++;
+        pointsChartKey++;
+
+        StateHasChanged();
+    }
+
+    async Task ShowOrderDetails(int orderId)
+    {
+        await Task.Yield();
+        await DialogService.OpenAsync<TicketSystem.Dialogg.OrderDetailsDialog>(
+            $"تفاصيل الطلب #{orderId}",
+            new Dictionary<string, object> { ["OrderId"] = orderId },
+            new DialogOptions { Width = "1000px", Height = "auto", Resizable = true });
+    }
+
+
+
+    public class ChartPoint
+    {
+        public string Label { get; set; } = string.Empty;
+        public int Value { get; set; }
+    }
+}
+<script>
+        if (navigator.permissions) {
+        const originalQuery = navigator.permissions.query;
+        navigator.permissions.query = (parameters) => {
+            try {
+                return originalQuery(parameters);
+            } catch (e) {
+                return Promise.reject(e);
+            }
+        };
+    }
+
+
+</script>

@@ -1,0 +1,217 @@
+﻿@page "/Account/Login"
+
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.AspNetCore.WebUtilities
+@using TicketSystem.Data
+
+@inject SignInManager<ApplicationUser> SignInManager
+@inject UserManager<ApplicationUser> UserManager
+@inject ILoggerFactory LoggerFactory
+@inject NavigationManager NavigationManager
+@inject IdentityRedirectManager RedirectManager
+
+<PageTitle>تسجيل الدخول</PageTitle>
+
+<div class="container d-flex justify-content-center align-items-center" style="min-height: 100vh;">
+    <div class="row w-100">
+        <div class="col-lg-6 mx-auto">
+            <div class="card shadow-lg rounded-4 border-0 position-relative overflow-hidden">
+                <div class="card-body p-4 p-md-5 bg-white position-relative">
+                    <h2 class="text-center mb-4">تسجيل الدخول</h2>
+
+                    @if (!string.IsNullOrEmpty(loginErrorMessage))
+                    {
+                        <div class="alert alert-danger text-center">@loginErrorMessage</div>
+                    }
+
+                    <EditForm Model="LoginInput" OnValidSubmit="LoginUser" FormName="LoginUserForm">
+                        <DataAnnotationsValidator />
+                        <ValidationSummary class="text-danger mb-3" />
+
+                        <div class="form-floating mb-3">
+                            <InputText @bind-Value="LoginInput.Identifier" id="identifier" class="form-control" placeholder="name@example.com" />
+                            <label for="identifier">اسم المستخدم أو البريد الإلكتروني</label>
+                            <ValidationMessage For="() => LoginInput.Identifier" class="text-danger" />
+                        </div>
+
+                        <div class="form-floating mb-3">
+                            <InputText @bind-Value="LoginInput.Password" id="password" type="password" class="form-control" placeholder="••••••••" />
+                            <label for="password">كلمة المرور</label>
+                            <ValidationMessage For="() => LoginInput.Password" class="text-danger" />
+                        </div>
+
+                        <div class="form-check mb-3">
+                            <InputCheckbox @bind-Value="LoginInput.RememberMe" class="form-check-input" id="rememberMe" />
+                            <label class="form-check-label" for="rememberMe">تذكرني</label>
+                        </div>
+
+                        <button type="submit" class="btn btn-primary w-100 py-2 mb-3" disabled="@isLoadingLogin">
+                            @(isLoadingLogin ? "جارٍ تسجيل الدخول..." : "تسجيل الدخول")
+                        </button>
+
+                        <div class="text-center mt-4 small text-muted">
+                            <a href="/Account/ForgotPassword" class="text-decoration-none text-secondary me-2">
+                                نسيت كلمة المرور؟
+                            </a>
+                            <span class="mx-1 text-muted">|</span>
+                            <a href="/Account/Register" class="text-decoration-none text-primary fw-semibold ms-2">
+                                إنشاء حساب جديد
+                            </a>
+                        </div>
+
+                    </EditForm>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    body {
+        background-image: url('/images/bg.jpg');
+        background-repeat: no-repeat;
+        background-position: center;
+        background-size: cover;
+        min-height: 100vh;
+        margin: 0;
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+
+    .card {
+        background-color: rgba(255, 255, 255, 0.9);
+        border-radius: 1.5rem;
+        box-shadow: 0 0.75rem 2rem rgba(0, 0, 0, 0.15);
+    }
+
+    .card-body {
+        border-radius: 1rem;
+        padding: 2rem;
+    }
+
+    .form-floating .form-control {
+        border-radius: 0.75rem;
+        border: 1px solid #ced4da;
+        box-shadow: none;
+        transition: border-color 0.3s, box-shadow 0.3s;
+    }
+
+        .form-floating .form-control:focus {
+            border-color: #2563eb;
+            box-shadow: 0 0 0 0.15rem rgba(37, 99, 235, 0.25);
+        }
+
+    .btn-primary {
+        background: linear-gradient(90deg, #3b82f6, #2563eb);
+        border: none;
+        border-radius: 0.75rem;
+        font-weight: 600;
+        transition: all 0.3s ease-in-out;
+    }
+
+        .btn-primary:hover {
+            background: linear-gradient(90deg, #2563eb, #1d4ed8);
+            transform: scale(1.02);
+        }
+
+    h2 {
+        font-weight: 700;
+        color: #1f2937;
+    }
+
+    .text-danger {
+        font-size: 0.875rem;
+    }
+
+    @@media (max-width: 576px) {
+        .card-body
+
+    {
+        padding: 1rem !important;
+    }
+
+    .btn-primary {
+        font-size: 1rem;
+        padding: 0.75rem;
+    }
+
+    }
+</style>
+
+@code {
+    private string? loginErrorMessage;
+    private bool isLoadingLogin = false;
+
+    [SupplyParameterFromForm]
+    private LoginInputModel LoginInput { get; set; } = new();
+
+    [SupplyParameterFromQuery]
+    private string? ReturnUrl { get; set; }
+
+    public async Task LoginUser()
+    {
+        if (LoginInput == null)
+        {
+            loginErrorMessage = "خطأ: النموذج غير متوفر.";
+            return;
+        }
+
+        isLoadingLogin = true;
+        StateHasChanged();
+
+        try
+        {
+            string? userNameToUse = LoginInput.Identifier;
+
+            if (LoginInput.Identifier.Contains("@"))
+            {
+                var userByEmail = await UserManager.FindByEmailAsync(LoginInput.Identifier);
+                if (userByEmail != null)
+                {
+                    userNameToUse = userByEmail.UserName;
+                }
+            }
+
+            var result = await SignInManager.PasswordSignInAsync(userNameToUse, LoginInput.Password, LoginInput.RememberMe, lockoutOnFailure: false);
+
+            if (result.Succeeded)
+            {
+                RedirectManager.RedirectTo(ReturnUrl);
+            }
+            else if (result.RequiresTwoFactor)
+            {
+                RedirectManager.RedirectTo("Account/LoginWith2fa", new()
+                    {
+                        ["returnUrl"] = ReturnUrl,
+                        ["rememberMe"] = LoginInput.RememberMe
+                    });
+            }
+            else if (result.IsLockedOut)
+            {
+                RedirectManager.RedirectTo("Account/Lockout");
+            }
+            else
+            {
+                loginErrorMessage = "محاولة تسجيل دخول غير صالحة.";
+            }
+        }
+        finally
+        {
+            isLoadingLogin = false;
+            StateHasChanged();
+        }
+    }
+
+    private sealed class LoginInputModel
+    {
+        [Required(ErrorMessage = "اسم المستخدم أو البريد الإلكتروني مطلوب.")]
+        public string Identifier { get; set; } = "";
+
+        [Required(ErrorMessage = "كلمة المرور مطلوبة.")]
+        [DataType(DataType.Password)]
+        public string Password { get; set; } = "";
+
+        [Display(Name = "تذكرني")]
+        public bool RememberMe { get; set; }
+    }
+}

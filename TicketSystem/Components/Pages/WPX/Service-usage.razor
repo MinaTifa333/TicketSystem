@@ -1,0 +1,317 @@
+﻿@page "/service-usage"
+@inject OrderService OrderService
+@inject DialogService DialogService
+@inject IJSRuntime JS
+@inject RoleService RoleService
+@inject AuthenticationStateProvider AuthProvider
+@inject NavigationManager NavigationManager
+@inject NotificationService NotificationService
+@using Microsoft.AspNetCore.Components.Forms
+@using System.Globalization
+@using OfficeOpenXml
+@using System.IO
+@rendermode InteractiveServer
+@using System.Security.Claims
+
+<h3 class="text-primary mb-4"><i class="fas fa-chart-bar me-2"></i>متابعة استخدام الخدمات</h3>
+
+@if (!CanView)
+{
+    <div class="alert alert-danger">🚫 لا تملك صلاحية عرض استخدام الخدمات</div>
+}
+else
+{
+    <!-- Card للفترة -->
+    <div class="card mb-4 p-3 shadow-sm">
+        <div class="d-flex gap-3 flex-wrap align-items-center">
+            <span class="fw-semibold">اختر الفترة:</span>
+            <RadzenDropDown @bind-Value="selectedPeriod" Data="periodOptions"
+                            TextProperty="Text" ValueProperty="Value"
+                            Style="width:220px" Change="@(async () => await OnPeriodChanged())" />
+            <RadzenButton Icon="refresh" Text="تحديث" Click="LoadData" Class="btn btn-outline-primary rounded-pill px-3" Style="min-width:100px;" />
+
+            @if (showCustomRange)
+            {
+                <div class="d-flex gap-2 align-items-center flex-wrap mt-2">
+                    <div class="d-flex align-items-center gap-1">
+                        <i class="fas fa-calendar-alt text-secondary"></i>
+                        <InputDate @bind-Value="customFrom" class="form-control" style="width:150px;" />
+                    </div>
+                    <span class="fw-bold">إلى</span>
+                    <div class="d-flex align-items-center gap-1">
+                        <i class="fas fa-calendar-alt text-secondary"></i>
+                        <InputDate @bind-Value="customTo" class="form-control" style="width:150px;" />
+                    </div>
+                    <RadzenButton Icon="search" Text="بحث" Click="ApplyCustomRange" Class="btn btn-outline-primary rounded-pill px-3" />
+                </div>
+            }
+        </div>
+    </div>
+
+    @if (isLoading)
+    {
+        <div class="text-center my-5">
+            <div class="spinner-border text-primary" role="status" style="width:4rem; height:4rem"></div>
+            <div class="mt-3 text-muted fw-semibold fs-5">جارٍ تحميل البيانات...</div>
+        </div>
+    }
+    else
+    {
+        <!-- إحصائيات الخدمات -->
+        <div class="card mb-4 shadow-sm p-3">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 class="fw-bold">إحصائية استخدام الخدمات:</h5>
+                <RadzenButton Text="تصدير Excel" Click="ExportServiceUsageExcel"
+                              Class="btn btn-success btn-sm rounded-pill px-3"
+                              Disabled="@(CanExport == false)" />
+                <RadzenButton Text="تصدير PDF" Click="ExportServiceUsagePdf"
+                              Class="btn btn-danger btn-sm rounded-pill px-3"
+                              Disabled="@(CanExport == false)" />
+            </div>
+            <table class="table table-striped table-hover table-bordered mb-0">
+                <thead class="table-dark text-center">
+                    <tr>
+                        <th>اسم الخدمة</th>
+                        <th>عدد مرات الاستخدام</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var usage in serviceUsage)
+                    {
+                        <tr class="text-center">
+                            <td>@usage.ServiceName</td>
+                            <td>@usage.UsageCount</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <!-- تفاصيل الطلبات -->
+        <div class="card shadow-sm p-3">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 class="fw-bold">تفاصيل الطلبات:</h5>
+                <div class="d-flex gap-2">
+                    <RadzenButton Text="تصدير Excel" Click="ExportDetailsExcel"
+                                  Class="btn btn-success btn-sm rounded-pill px-3"
+                                  Disabled="@(CanExport == false)" />
+                    <RadzenButton Text="تصدير PDF" Click="ExportDetailsPdf"
+                                  Class="btn btn-danger btn-sm rounded-pill px-3"
+                                  Disabled="@(CanExport == false)" />
+                </div>
+            </div>
+            <RadzenDataGrid TItem="OrderService.OrderDetailExtended" Data="@allDetails"
+                            LoadData="@(args => LoadLazyData(args))"
+                            AllowPaging="true" PageSize="10" AllowSorting="true"
+                            Class="table table-sm table-bordered table-striped table-hover">
+                <Columns>
+                    <RadzenDataGridColumn TItem="OrderService.OrderDetailExtended" Property="OrderId" Title="رقم الطلب" Width="100px" />
+                    <RadzenDataGridColumn TItem="OrderService.OrderDetailExtended" Property="ServiceName" Title="اسم الخدمة بالكامل" Width="250px" />
+                    <RadzenDataGridColumn TItem="OrderService.OrderDetailExtended" Property="CreatedBySection" Title="القسم الذي أنشأه" Width="180px" />
+                    <RadzenDataGridColumn TItem="OrderService.OrderDetailExtended" Property="CreationDate" Title="تاريخ إنشاء الطلب" Width="160px">
+                        <Template Context="d">@FormatDate(d.CreationDate)</Template>
+                    </RadzenDataGridColumn>
+                    <RadzenDataGridColumn TItem="OrderService.OrderDetailExtended" Property="ClosedDate" Title="تاريخ إغلاق الطلب" Width="160px">
+                        <Template Context="d">@FormatDate(d.ClosedDate)</Template>
+                    </RadzenDataGridColumn>
+                </Columns>
+            </RadzenDataGrid>
+        </div>
+    }
+}
+
+@code {
+    private bool isLoading = true;
+    private string selectedPeriod = "today";
+    private bool showCustomRange = false;
+    private DateTime? customFrom;
+    private DateTime? customTo;
+
+    private List<OrderService.OrderDetailExtended> allDetails = new();
+    private List<OrderService.ServiceUsage> serviceUsage = new();
+
+    private List<PeriodOption> periodOptions = new()
+    {
+        new PeriodOption { Text = "اليوم", Value = "today" },
+        new PeriodOption { Text = "آخر 7 أيام", Value = "last7" },
+        new PeriodOption { Text = "آخر 30 يوم", Value = "last30" },
+        new PeriodOption { Text = "بين تاريخين", Value = "custom" }
+    };
+
+    // ================= الصلاحيات =================
+    private bool CanView = false;
+    private bool CanExport = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // تحميل الصلاحيات
+        var authState = await AuthProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+
+        var roles = user.Claims
+                        .Where(c => c.Type == ClaimTypes.Role)
+                        .Select(c => c.Value)
+                        .ToList();
+
+        var allPermissions = new List<string>();
+        foreach (var role in roles)
+        {
+            var perms = await RoleService.GetPermissionsByRoleAsync(role);
+            allPermissions.AddRange(perms);
+        }
+
+        var permissions = allPermissions.Distinct().ToList();
+
+        CanView = permissions.Contains("Permissions.serviceUsage.View");
+        CanExport = permissions.Contains("Permissions.serviceUsage.Export");
+
+        if (!CanView)
+        {
+            NavigationManager.NavigateTo("/Account/AccessDenied");
+            return;
+        }
+
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        isLoading = true;
+        StateHasChanged();
+
+        DateTime? from = null;
+        DateTime? to = null;
+
+        switch (selectedPeriod)
+        {
+            case "today":
+                from = DateTime.Today;
+                to = DateTime.Today.AddDays(1).AddSeconds(-1);
+                break;
+            case "last7":
+                from = DateTime.Today.AddDays(-7);
+                to = DateTime.Today.AddDays(1).AddSeconds(-1);
+                break;
+            case "last30":
+                from = DateTime.Today.AddDays(-30);
+                to = DateTime.Today.AddDays(1).AddSeconds(-1);
+                break;
+            case "custom":
+                if (customFrom.HasValue && customTo.HasValue)
+                {
+                    from = customFrom.Value.Date;
+                    to = customTo.Value.Date.AddDays(1).AddSeconds(-1);
+                }
+                else
+                {
+                    isLoading = false;
+                    return;
+                }
+                break;
+        }
+
+        if (from.HasValue && to.HasValue)
+        {
+            allDetails = await OrderService.GetOrderDetailsByDateAsync(from, to);
+            serviceUsage = await OrderService.GetServiceUsageAsync(from.Value, to.Value);
+        }
+
+        isLoading = false;
+    }
+
+    private async Task OnPeriodChanged()
+    {
+        showCustomRange = selectedPeriod == "custom";
+        if (!showCustomRange)
+        {
+            await LoadData();
+        }
+    }
+
+    private async Task ApplyCustomRange()
+    {
+        await LoadData();
+    }
+
+    private string FormatDate(DateTime? date) =>
+        date.HasValue ? date.Value.ToString("yyyy/MM/dd HH:mm", CultureInfo.InvariantCulture) : "-";
+
+    private async Task LoadLazyData(Radzen.LoadDataArgs args)
+    {
+        await LoadData();
+    }
+
+    // ================= تصدير Excel =================
+    private async Task ExportServiceUsageExcel()
+    {
+        if (!CanExport) return;
+        using var package = new ExcelPackage();
+        var ws = package.Workbook.Worksheets.Add("ServiceUsage");
+        ws.Cells[1, 1].Value = "اسم الخدمة";
+        ws.Cells[1, 2].Value = "عدد مرات الاستخدام";
+        int row = 2;
+        foreach (var item in serviceUsage)
+        {
+            ws.Cells[row, 1].Value = item.ServiceName;
+            ws.Cells[row, 2].Value = item.UsageCount;
+            row++;
+        }
+        var fileBytes = package.GetAsByteArray();
+        await JS.InvokeVoidAsync("saveAsFile", "ServiceUsage.xlsx", Convert.ToBase64String(fileBytes));
+    }
+
+    private async Task ExportDetailsExcel()
+    {
+        if (!CanExport) return;
+        using var package = new ExcelPackage();
+        var ws = package.Workbook.Worksheets.Add("OrderDetails");
+        ws.Cells[1, 1].Value = "رقم الطلب";
+        ws.Cells[1, 2].Value = "اسم الخدمة";
+        ws.Cells[1, 3].Value = "القسم الذي أنشأه";
+        ws.Cells[1, 4].Value = "تاريخ إنشاء الطلب";
+        ws.Cells[1, 5].Value = "تاريخ إغلاق الطلب";
+
+        int row = 2;
+        foreach (var d in allDetails)
+        {
+            ws.Cells[row, 1].Value = d.OrderId;
+            ws.Cells[row, 2].Value = d.ServiceName;
+            ws.Cells[row, 3].Value = d.CreatedBySection;
+            ws.Cells[row, 4].Value = FormatDate(d.CreationDate);
+            ws.Cells[row, 5].Value = FormatDate(d.ClosedDate);
+            row++;
+        }
+        var fileBytes = package.GetAsByteArray();
+        await JS.InvokeVoidAsync("saveAsFile", "OrderDetails.xlsx", Convert.ToBase64String(fileBytes));
+    }
+
+    // ================= تصدير PDF =================
+    private async Task ExportServiceUsagePdf()
+    {
+        if (!CanExport) return;
+        await JS.InvokeVoidAsync("open", "/service-usage-export-pdf?type=usage");
+    }
+
+    private async Task ExportDetailsPdf()
+    {
+        if (!CanExport) return;
+        await JS.InvokeVoidAsync("open", "/service-usage-export-pdf?type=details");
+    }
+
+    public class PeriodOption
+    {
+        public string Text { get; set; } = "";
+        public string Value { get; set; } = "";
+    }
+}
+
+<script>
+    function saveAsFile(filename, bytesBase64) {
+        var link = document.createElement('a');
+        link.download = filename;
+        link.href = "data:application/octet-stream;base64," + bytesBase64;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+</script>

@@ -1,0 +1,264 @@
+﻿@page "/rates"
+@using TicketSystem.Services.WPX
+@using TicketSystem.TSModel
+@inject RateService RateService
+@inject OrderFixedService OrderFixedService
+@inject IJSRuntime JS
+@inject SectionService SectionService
+@inject AuthenticationStateProvider AuthProvider
+@inject RoleService RoleService
+@inject NavigationManager NavigationManager
+@rendermode InteractiveServer
+
+<h3 class="mb-4 fw-bold text-primary">
+    <i class="bi bi-cash-coin me-2"></i> إدارة الـ Rates
+</h3>
+
+@if (!CanView)
+{
+    <div class="alert alert-danger">ليس لديك صلاحية لعرض هذه الصفحة.</div>
+}
+else
+{
+    <!-- زر إضافة -->
+    @if (CanAdd)
+    {
+        <button class="btn btn-primary mb-3" @onclick="NewRate">
+            <i class="bi bi-plus-circle me-1"></i> إضافة جديد
+        </button>
+    }
+
+    <!-- جدول البيانات -->
+    <table class="table table-hover table-bordered align-middle shadow-sm">
+        <thead class="table-light">
+            <tr>
+                <th>#</th>
+                <th>الخدمة</th>
+                <th>من قسم</th>
+                <th>الوقت (بالدقائق)</th>
+                <th>قيمة المعدل</th>
+                <th>نقاط</th>
+                <th class="text-center">إجراءات</th>
+            </tr>
+        </thead>
+        <tbody>
+            @if (rates?.Any() == true)
+            {
+                @foreach (var rate in rates)
+                {
+                    <tr>
+                        <td>@rate.ID</td>
+                        <td>@rate.OrderFixed?.DisplayText</td>
+                        <td>@rate.FromDepartment</td>
+                        <td>@rate.TimeMinute</td>
+                        <td>@rate.RateValue</td>
+                        <td class="fw-bold text-success">
+                            @(rate.RateValue * rate.TimeMinute)
+                        </td>
+                        <td class="text-center">
+                            @if (CanEdit)
+                            {
+                                <button class="btn btn-sm btn-warning me-1" @onclick="() => EditRate(rate)">
+                                    <i class="bi bi-pencil-square"></i>
+                                </button>
+                            }
+                            @if (CanDelete)
+                            {
+                                <button class="btn btn-sm btn-danger" @onclick="() => DeleteRate(rate.ID)">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            }
+                        </td>
+                    </tr>
+                }
+            }
+            else
+            {
+                <tr>
+                    <td colspan="7" class="text-center text-muted">لا توجد بيانات</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+
+    <!-- المودال -->
+    @if (isModalOpen)
+    {
+        <div class="modal fade show d-block" tabindex="-1" style="background-color:rgba(0,0,0,0.5)">
+            <div class="modal-dialog modal-lg">
+                <div class="modal-content shadow-lg border-0">
+                    <div class="modal-header bg-primary text-white">
+                        <h5 class="modal-title">@modalTitle</h5>
+                        <button type="button" class="btn-close btn-close-white" @onclick="CloseModal"></button>
+                    </div>
+                    <EditForm Model="@currentRate" OnValidSubmit="SaveRate">
+                        <DataAnnotationsValidator />
+                        <ValidationSummary />
+                        <div class="modal-body">
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <label class="form-label">الخدمة</label>
+                                    <select class="form-select" @bind="currentRate.OrderFixedId">
+                                        <option value="">اختر</option>
+                                        @foreach (var of in orderFixedList)
+                                        {
+                                            <option value="@of.Id">@of.DisplayText</option>
+                                        }
+                                    </select>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">من قسم</label>
+                                    <select class="form-select" @bind="currentRate.FromDepartment">
+                                        <option value="">اختر القسم</option>
+                                        @foreach (var sec in sections)
+                                        {
+                                            <option value="@sec.Name">@sec.Name</option>
+                                        }
+                                    </select>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">الوقت (بالدقائق)</label>
+                                    <input type="number" class="form-control" @bind="currentRate.TimeMinute" />
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">قيمة المعدل</label>
+                                    <input type="number" class="form-control" @bind="currentRate.RateValue" step="1" />
+                                </div>
+                                <div class="col-md-12">
+                                    <label class="form-label">نقاط</label>
+                                    <input type="text" class="form-control fw-bold text-success"
+                                           value="@(currentRate.RateValue * currentRate.TimeMinute)" readonly />
+                                </div>
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" @onclick="CloseModal">
+                                <i class="bi bi-x-circle me-1"></i> إلغاء
+                            </button>
+                            <button type="submit" class="btn btn-primary" disabled="@( !CanAdd && !CanEdit )">
+                                <i class="bi bi-save me-1"></i> حفظ
+                            </button>
+                        </div>
+                    </EditForm>
+                </div>
+            </div>
+        </div>
+    }
+}
+
+@code {
+    private List<Rate> rates = new();
+    private List<OrderFixed> orderFixedList = new();
+    private List<Section> sections = new();
+    private Rate currentRate = new Rate();
+    private bool isModalOpen = false;
+    private string modalTitle = "";
+
+    private bool CanView = false;
+    private bool CanAdd = false;
+    private bool CanEdit = false;
+    private bool CanDelete = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadPermissions();
+        if (!CanView)
+        {
+            NavigationManager.NavigateTo("/Account/AccessDenied");
+            return;
+        }
+
+        rates = await RateService.GetAllAsync();
+        orderFixedList = await OrderFixedService.GetAllAsync();
+        sections = await SectionService.GetAllAsync();
+    }
+
+    private async Task LoadPermissions()
+    {
+        var authState = await AuthProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        var roles = user.Claims
+                        .Where(c => c.Type == System.Security.Claims.ClaimTypes.Role)
+                        .Select(c => c.Value)
+                        .ToList();
+
+        var allPermissions = new List<string>();
+
+        foreach (var role in roles)
+        {
+            var perms = await RoleService.GetPermissionsByRoleAsync(role);
+            allPermissions.AddRange(perms);
+        }
+
+        var permissions = allPermissions.Distinct().ToList();
+
+        CanView = permissions.Contains("Permissions.rates.View");
+        CanAdd = permissions.Contains("Permissions.rates.Add");
+        CanEdit = permissions.Contains("Permissions.rates.Edit");
+        CanDelete = permissions.Contains("Permissions.rates.Delete");
+    }
+
+
+    private void NewRate()
+    {
+        if (!CanAdd) return;
+
+        currentRate = new Rate { RateValue = 1 };
+        modalTitle = "إضافة Rate جديد";
+        isModalOpen = true;
+    }
+
+    private void EditRate(Rate rate)
+    {
+        if (!CanEdit) return;
+
+        currentRate = new Rate
+            {
+                ID = rate.ID,
+                OrderFixedId = rate.OrderFixedId,
+                FromDepartment = rate.FromDepartment,
+                TimeMinute = rate.TimeMinute,
+                RateValue = rate.RateValue
+            };
+        modalTitle = "تعديل Rate";
+        isModalOpen = true;
+    }
+
+    private async Task SaveRate()
+    {
+        if (!CanAdd && !CanEdit) return;
+
+        if (await RateService.ExistsAsync(currentRate.OrderFixedId, currentRate.FromDepartment, currentRate.ID))
+        {
+            await JS.InvokeVoidAsync("Swal.fire", new
+            {
+                icon = "error",
+                title = "تنبيه",
+                text = "هذه الخدمة وهذا القسم مسجلين بالفعل!",
+                confirmButtonText = "موافق"
+            });
+            return;
+        }
+
+        if (currentRate.ID == 0)
+            await RateService.AddAsync(currentRate);
+        else
+            await RateService.UpdateAsync(currentRate);
+
+        rates = await RateService.GetAllAsync();
+        CloseModal();
+    }
+
+    private async Task DeleteRate(int id)
+    {
+        if (!CanDelete) return;
+
+        if (await JS.InvokeAsync<bool>("confirm", "هل أنت متأكد من الحذف؟"))
+        {
+            await RateService.DeleteAsync(id);
+            rates = await RateService.GetAllAsync();
+        }
+    }
+
+    private void CloseModal() => isModalOpen = false;
+}

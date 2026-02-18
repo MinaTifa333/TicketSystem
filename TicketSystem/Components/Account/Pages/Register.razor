@@ -1,0 +1,267 @@
+﻿@page "/Account/Register"
+
+@using System.ComponentModel.DataAnnotations
+@using System.Text
+@using System.Text.Encodings.Web
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.AspNetCore.WebUtilities
+@using TicketSystem.Data
+
+@inject UserManager<ApplicationUser> UserManager
+@inject IUserStore<ApplicationUser> UserStore
+@inject SignInManager<ApplicationUser> SignInManager
+@inject IEmailSender<ApplicationUser> EmailSender
+@inject ILogger<Register> Logger
+@inject NavigationManager NavigationManager
+@inject IdentityRedirectManager RedirectManager
+
+<PageTitle>Register</PageTitle>
+
+<div class="container d-flex justify-content-center align-items-center" style="min-height: 100vh;">
+    <div class="row w-100">
+        <div class="col-lg-6 mx-auto">
+            <div class="card shadow-lg rounded-4 border-0">
+                <div class="card-body p-4 p-md-5 bg-white position-relative">
+                    <h2 class="text-center mb-4">إنشاء حساب جديد</h2>
+
+                    @if (!string.IsNullOrEmpty(successMessage))
+                    {
+                        <div class="alert alert-success text-center">@successMessage</div>
+                    }
+
+                    @if (identityErrors is not null)
+                    {
+                        <div class="alert alert-danger text-center">
+                            <ul class="mb-0">
+                                @foreach (var error in identityErrors)
+                                {
+                                    <li>@error.Description</li>
+                                }
+                            </ul>
+                        </div>
+                    }
+
+                    <EditForm Model="Input" OnValidSubmit="RegisterUser" FormName="registerForm">
+                        <DataAnnotationsValidator />
+                        <ValidationSummary class="text-danger mb-3" />
+
+                        <div class="form-floating mb-3 input-group">
+                            <span class="input-group-text bg-white border-end-0">
+                                <i class="bi bi-person-fill text-secondary"></i>
+                            </span>
+                            <InputText @bind-Value="Input.UserName" id="username" class="form-control border-start-0" placeholder="اسم المستخدم" />
+                            <label for="username">اسم المستخدم</label>
+                        </div>
+                        <ValidationMessage For="() => Input.UserName" class="text-danger" />
+
+                        <div class="form-floating mb-3 input-group">
+                            <span class="input-group-text bg-white border-end-0">
+                                <i class="bi bi-envelope-fill text-secondary"></i>
+                            </span>
+                            <InputText @bind-Value="Input.Email" id="email" class="form-control border-start-0" placeholder="name@example.com" />
+                            <label for="email">البريد الإلكتروني</label>
+                        </div>
+                        <ValidationMessage For="() => Input.Email" class="text-danger" />
+
+                        <div class="form-floating mb-3 input-group">
+                            <span class="input-group-text bg-white border-end-0">
+                                <i class="bi bi-lock-fill text-secondary"></i>
+                            </span>
+                            <InputText @bind-Value="Input.Password" id="password" type="password" class="form-control border-start-0" placeholder="••••••••" />
+                            <label for="password">كلمة المرور</label>
+                        </div>
+                        <ValidationMessage For="() => Input.Password" class="text-danger" />
+
+                        <div class="form-floating mb-3 input-group">
+                            <span class="input-group-text bg-white border-end-0">
+                                <i class="bi bi-check2-circle text-secondary"></i>
+                            </span>
+                            <InputText @bind-Value="Input.ConfirmPassword" id="confirm-password" type="password" class="form-control border-start-0" placeholder="••••••••" />
+                            <label for="confirm-password">تأكيد كلمة المرور</label>
+                        </div>
+                        <ValidationMessage For="() => Input.ConfirmPassword" class="text-danger" />
+
+                        <button type="submit" class="btn btn-primary w-100 py-2 mb-3" disabled="@isSubmitting">
+                            @(isSubmitting ? "جاري التسجيل..." : "تسجيل")
+                        </button>
+
+                        <div class="text-center mt-3">
+                            <span class="text-muted">هل لديك حساب؟</span>
+                            <a href="/Account/Login" class="text-primary fw-semibold text-decoration-none ms-1">
+                                سجّل الدخول الآن
+                            </a>
+                        </div>
+                    </EditForm>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    body {
+        background-image: url('/images/bg.jpg');
+        background-repeat: no-repeat;
+        background-position: center;
+        background-size: cover;
+        min-height: 100vh;
+        margin: 0;
+        font-family: 'Segoe UI', sans-serif;
+    }
+
+    .card {
+        background-color: rgba(255, 255, 255, 0.9);
+        border-radius: 1.5rem;
+        box-shadow: 0 0.75rem 2rem rgba(0, 0, 0, 0.15);
+    }
+
+    .card-body {
+        border-radius: 1rem;
+        padding: 2rem;
+    }
+
+    .form-floating .form-control {
+        border-radius: 0.75rem;
+        border: 1px solid #ced4da;
+        box-shadow: none;
+        transition: border-color 0.3s, box-shadow 0.3s;
+    }
+
+        .form-floating .form-control:focus {
+            border-color: #2563eb;
+            box-shadow: 0 0 0 0.15rem rgba(37, 99, 235, 0.25);
+        }
+
+    .btn-primary {
+        background: linear-gradient(90deg, #3b82f6, #2563eb);
+        border: none;
+        border-radius: 0.75rem;
+        font-weight: 600;
+        transition: all 0.3s ease-in-out;
+    }
+
+        .btn-primary:hover {
+            background: linear-gradient(90deg, #2563eb, #1d4ed8);
+            transform: scale(1.02);
+        }
+
+    h2 {
+        font-weight: 700;
+        color: #1f2937;
+    }
+
+    .text-danger {
+        font-size: 0.875rem;
+    }
+
+    @@media (max-width: 576px) {
+        .card-body {
+            padding: 1rem !important;
+        }
+
+        .btn-primary {
+            font-size: 1rem;
+            padding: 0.75rem;
+        }
+    }
+</style>
+
+@code {
+    private IEnumerable<IdentityError>? identityErrors;
+    private string? successMessage;
+    private bool isSubmitting = false;
+
+    [SupplyParameterFromForm]
+    private InputModel Input { get; set; } = new();
+
+    [SupplyParameterFromQuery]
+    private string? ReturnUrl { get; set; }
+
+    public async Task RegisterUser(EditContext editContext)
+    {
+        isSubmitting = true;
+        try
+        {
+            var user = CreateUser();
+
+            // ✅ حفظ اسم المستخدم الحقيقي
+            await UserStore.SetUserNameAsync(user, Input.UserName, CancellationToken.None);
+
+            var emailStore = GetEmailStore();
+            await emailStore.SetEmailAsync(user, Input.Email, CancellationToken.None);
+
+            var result = await UserManager.CreateAsync(user, Input.Password);
+
+            if (!result.Succeeded)
+            {
+                identityErrors = result.Errors;
+                return;
+            }
+
+            Logger.LogInformation("تم إنشاء حساب جديد.");
+
+            var userId = await UserManager.GetUserIdAsync(user);
+            var code = await UserManager.GenerateEmailConfirmationTokenAsync(user);
+            code = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(code));
+            var callbackUrl = NavigationManager.GetUriWithQueryParameters(
+                NavigationManager.ToAbsoluteUri("Account/ConfirmEmail").AbsoluteUri,
+                new Dictionary<string, object?> { ["userId"] = userId, ["code"] = code, ["returnUrl"] = ReturnUrl });
+
+            await EmailSender.SendConfirmationLinkAsync(user, Input.Email, HtmlEncoder.Default.Encode(callbackUrl));
+
+            successMessage = "تم إنشاء الحساب بنجاح!";
+
+            if (UserManager.Options.SignIn.RequireConfirmedAccount)
+            {
+                RedirectManager.RedirectTo("Account/RegisterConfirmation", new() { ["email"] = Input.Email, ["returnUrl"] = ReturnUrl });
+            }
+
+            await SignInManager.SignInAsync(user, isPersistent: false);
+            RedirectManager.RedirectTo(ReturnUrl);
+        }
+        finally
+        {
+            isSubmitting = false;
+        }
+    }
+
+    private ApplicationUser CreateUser()
+    {
+        try
+        {
+            return Activator.CreateInstance<ApplicationUser>();
+        }
+        catch
+        {
+            throw new InvalidOperationException($"لا يمكن إنشاء مثيل من '{nameof(ApplicationUser)}'. تأكد أنه ليس abstract وله constructor بدون معاملات.");
+        }
+    }
+
+    private IUserEmailStore<ApplicationUser> GetEmailStore()
+    {
+        if (!UserManager.SupportsUserEmail)
+        {
+            throw new NotSupportedException("يجب أن يدعم التخزين البريد الإلكتروني.");
+        }
+        return (IUserEmailStore<ApplicationUser>)UserStore;
+    }
+
+    private sealed class InputModel
+    {
+        [Required(ErrorMessage = "اسم المستخدم مطلوب.")]
+        public string UserName { get; set; } = "";
+
+        [Required(ErrorMessage = "البريد الإلكتروني مطلوب")]
+        [EmailAddress(ErrorMessage = "بريد إلكتروني غير صالح")]
+        public string Email { get; set; } = "";
+
+        [Required(ErrorMessage = "كلمة المرور مطلوبة")]
+        [StringLength(100, ErrorMessage = "كلمة المرور يجب أن تكون بين {2} و {1} حرفًا.", MinimumLength = 6)]
+        [DataType(DataType.Password)]
+        public string Password { get; set; } = "";
+
+        [DataType(DataType.Password)]
+        [Compare("Password", ErrorMessage = "كلمتا المرور غير متطابقتين")]
+        public string ConfirmPassword { get; set; } = "";
+    }
+}

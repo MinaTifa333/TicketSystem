@@ -1,0 +1,152 @@
+﻿@* ===== Order Details Dialog ===== *@
+@using Radzen
+@using TicketSystem.Services
+@using TicketSystem.TSModel
+@using Radzen.Blazor
+
+@inject OrderService OrderService
+@inject DialogService DialogService
+
+@if (order != null)
+{
+    <RadzenCard Style="min-width: 700px;">
+        <RadzenFieldset Text="بيانات الطلب الرئيسية" Expandable="true" Expanded="true">
+            <div class="row">
+                <div class="col-md-4">
+                    <p><b>رقم الطلب:</b> @order.Id</p>
+                    <p><b>تاريخ الإنشاء:</b> @order.DateTime?.ToString("yyyy-MM-dd HH:mm")</p>
+                </div>
+                <div class="col-md-4">
+                    <p><b>عامل التكرار:</b> @order.RepeateFactor</p>
+                    <p><b>الإدارة الأخيرة:</b> @order.LastDepartment</p>
+                </div>
+                <div class="col-md-4">
+                    <p>
+                        <b>الحالة:</b>
+                        @if (order.Closed == true)
+                        {
+                            <RadzenBadge Text="مغلق" Style="background-color: #dc3545; color:white" />
+                        }
+                        else
+                        {
+                            <RadzenBadge Text="مفتوح" Style="background-color: #28a745; color:white" />
+                        }
+                    </p>
+                    <p><b>تم الإنشاء بواسطة:</b> @order.CreatedBy</p>
+                </div>
+            </div>
+            <div class="row mt-2">
+                <div class="col-md-12">
+                    @if (order.Fixed != null)
+                    {
+
+                            @if (!string.IsNullOrWhiteSpace(order.Fixed.DisplayText))
+                            {
+                                <div class="row mt-1">
+                                    <div class="col-md-6"><b>تفاصيل الخدمة</b> @order.Fixed.DisplayText</div>
+                                </div>
+                            }
+                           
+                    }
+                </div>
+            </div>       
+            
+            <div class="row mt-2">
+                <div class="col-md-12">
+                    <p><b>ملاحظات:</b> @order.Notes</p>
+                </div>
+            </div>
+        </RadzenFieldset>
+
+        <RadzenFieldset Text="تفاصيل الطلب" Expandable="true" Expanded="true" Style="margin-top:20px">
+            @if (order.OrderDetails?.Any() == true)
+            {
+                <RadzenDataGrid TItem="OrderDetail"
+                                Data="@order.OrderDetails"
+                                AllowPaging="true"
+                                PageSize="5"
+                                AllowColumnResize="true"
+                                ColumnWidth="150px">
+                    <Columns>
+                        <RadzenDataGridColumn TItem="OrderDetail" Property="Id" Title="ID" Width="70px" />
+                        <RadzenDataGridColumn TItem="OrderDetail" Property="FromDep" Title="من إدارة" />
+                        <RadzenDataGridColumn TItem="OrderDetail" Property="ToDepartment" Title="إلى إدارة" />
+                        <RadzenDataGridColumn TItem="OrderDetail" Title="يحتاج موافقة">
+                            <Template Context="detail">
+                                @(detail.NeedApproval ? "نعم" : "لا")
+                            </Template>
+                        </RadzenDataGridColumn>
+                        <RadzenDataGridColumn TItem="OrderDetail" Title="المبلغ">
+                            <Template Context="detail">
+                                @detail.Amount
+                            </Template>
+                        </RadzenDataGridColumn>
+                        <RadzenDataGridColumn TItem="OrderDetail" Property="CreatedBy" Title="تم بواسطة" />
+                        <RadzenDataGridColumn TItem="OrderDetail" Title="تاريخ الإنشاء">
+                            <Template Context="detail">
+                                @detail.CreationDate.ToString("yyyy-MM-dd HH:mm")
+                            </Template>
+                        </RadzenDataGridColumn>
+                        <RadzenDataGridColumn TItem="OrderDetail" Title="المرفقات">
+                            <Template Context="detail">
+                                @if (!string.IsNullOrWhiteSpace(detail.Attachment))
+                                {
+                                    foreach (var file in detail.Attachment.Split(',', StringSplitOptions.RemoveEmptyEntries))
+                                    {
+                                        <a href="@($"/uploads/{file}")" target="_blank">@file</a>
+
+                                        <br />
+                                    }
+                                }
+                            </Template>
+                        </RadzenDataGridColumn>
+                    </Columns>
+                </RadzenDataGrid>
+            }
+            else
+            {
+                <RadzenAlert Text="لا توجد تفاصيل لهذا الطلب" Severity="AlertSeverity.Info" />
+            }
+        </RadzenFieldset>
+
+        <div class="row mt-3">
+            <div class="col-md-12 text-center">
+                <RadzenButton Text="إغلاق" Click="Close" ButtonStyle="ButtonStyle.Secondary" />
+            </div>
+        </div>
+    </RadzenCard>
+}
+else
+{
+    <div class="text-center my-5">
+        <RadzenProgressBar Mode="ProgressBarMode.Indeterminate" />
+        <p class="mt-3">جاري تحميل بيانات الطلب...</p>
+    </div>
+}
+
+@code {
+    [Parameter]
+    public int OrderId { get; set; }
+
+    private Order? order;
+
+    public string Level1 { get; set; }
+    public string Level2 { get; set; }
+    public string? Level3 { get; set; }
+    public string? Level4 { get; set; }
+    public string? Level5 { get; set; }
+    public string? Level6 { get; set; }
+
+
+
+
+    protected override async Task OnParametersSetAsync()
+    {
+        order = await OrderService.GetByIdAsync(OrderId);
+    }
+
+    private void Close()
+    {
+        DialogService.Close();
+    }
+}

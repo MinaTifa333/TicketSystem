@@ -1,0 +1,91 @@
+﻿
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@using Radzen
+@using TicketSystem.Data
+@using TicketSystem.Services.WPX
+@using TicketSystem.TSModel
+
+@inject RateService RateService
+@inject AuthenticationStateProvider AuthStateProvider
+@inject UserManager<ApplicationUser> UserManager
+@inject IDbContextFactory<ApplicationDbContext> ContextFactory
+
+<RadzenCard Style="border-radius:15px; box-shadow:0 2px 8px rgba(0,0,0,.1)">
+    <div class="p-4">
+        <h5 class="text-primary mb-3">
+            <i class="fas fa-star text-warning"></i>
+            النقاط الخاصة بقسمي (<span class="text-dark">@userSectionName</span>)
+        </h5>
+
+        @if (rates == null)
+        {
+            <RadzenProgressBar Mode="ProgressBarMode.Indeterminate" />
+        }
+        else if (!rates.Any())
+        {
+            <div class="alert alert-warning">
+                <i class="fas fa-info-circle"></i> لا توجد خدمات مرتبطة بالقسم.
+            </div>
+        }
+        else
+        {
+            <div class="row">
+                @foreach (var rate in rates)
+                {
+                    <div class="col-md-4 col-sm-6 mb-3">
+                        <div class="card shadow-sm h-100 border-0 rounded-3 service-card">
+                            <div class="card-body d-flex flex-column">
+                                <h6 class="card-title text-primary fw-bold mb-2">
+                                    <i class="fas fa-cogs me-1"></i>
+                                    @rate.OrderFixed?.DisplayText
+                                </h6>
+                                <div class="mt-auto">
+                                    <span class="badge bg-success fs-6 px-3 py-2 shadow-sm">
+                                        @(rate.RateValue * rate.TimeMinute) نقطة
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+</RadzenCard>
+
+@code {
+    private List<Rate> rates;
+    private string userSectionName = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var userId = UserManager.GetUserId(authState.User);
+
+        await using var db = await ContextFactory.CreateDbContextAsync();
+        var section = await db.UserSections
+            .Where(x => x.UserId == userId)
+            .Select(x => x.Section)
+            .FirstOrDefaultAsync();
+
+        if (section == null) return;
+
+        userSectionName = section.Name;
+
+        var allRates = await RateService.GetAllAsync();
+        rates = allRates.Where(r => r.FromDepartment == section.Name).ToList();
+    }
+}
+
+<style>
+    .service-card {
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .service-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 4px 12px rgba(0,0,0,.15);
+    }
+</style>

@@ -1,0 +1,390 @@
+﻿@page "/order"
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@using TicketSystem.Data
+@using TicketSystem.Dialogg
+@using TicketSystem.Services.Export
+@using TicketSystem.TSModel
+@inject OrderService OrderService
+@using OrderModel = TicketSystem.TSModel.Order
+@using OrderDetailModel = TicketSystem.TSModel.OrderDetail
+@inject DialogService DialogService
+@inject AuthenticationStateProvider AuthStateProvider
+@inject UserManager<ApplicationUser> UserManager
+@inject IDbContextFactory<ApplicationDbContext> ContextFactory
+@inject ExportService ExportService
+@inject IWebHostEnvironment Env
+@inject IJSRuntime JS
+@inject RoleService RoleService
+@inject NavigationManager NavigationManager
+@rendermode InteractiveServer
+@using System.Security.Claims
+
+<div class="container mt-4">
+
+    @if (!isAuthenticated)
+    {
+        <div class="text-center my-5">
+            <img src="images/Logo/Logo.png" alt="Logo" class="img-fluid" style="max-width: 100%; height: auto;" />
+            <h5 class="text-muted mt-4">الرجاء تسجيل الدخول للوصول إلى لوحة التحكم.</h5>
+            <NavLink class="btn btn-outline-primary mt-3" href="Account/Login">
+                <i class="bi bi-box-arrow-in-right"></i> تسجيل الدخول
+            </NavLink>
+        </div>
+    }
+    else if (!CanView)
+    {
+        <div class="alert alert-danger">ليس لديك صلاحية لعرض هذه الصفحة.</div>
+    }
+    else
+    {
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h3><i class="fas fa-list-alt me-2 text-primary"></i> قائمة الطلبات</h3>
+            <div>
+                <RadzenButton Icon="refresh" Text="تحديث"
+                              Click="ReloadOrders"
+                              Class="btn btn-outline-primary me-2" />
+
+                <RadzenButton Icon="file_download"
+                              Text="تصدير Excel شامل"
+                              Click="ExportWithDetails"
+                              Class="btn btn-outline-success me-2" />
+            </div>
+        </div>
+
+        <RadzenDataGrid TItem="OrderModel"
+                        Data="@orders"
+                        AllowPaging="true"
+                        PageSize="10"
+                        AllowFiltering="true"
+                        AllowSorting="true"
+                        FilterCaseSensitivity="FilterCaseSensitivity.CaseInsensitive"
+                        ExpandMode="DataGridExpandMode.Single"
+                        ShowExpandColumn="true"
+                        Class="shadow-sm border rounded">
+            <Columns>
+                <RadzenDataGridColumn TItem="OrderModel" Property="CreatedBy" Title="أنشئ بواسطة" />
+                <RadzenDataGridColumn TItem="OrderModel" Title="تاريخ الإنشاء">
+                    <Template Context="order">@order.DateTime?.ToString("yyyy/MM/dd HH:mm")</Template>
+                </RadzenDataGridColumn>
+                <RadzenDataGridColumn TItem="OrderModel" Title="الخدمة">
+                    <Template Context="order">@order.Fixed?.DisplayText.Trim() ?? "غير محدد"</Template>
+                </RadzenDataGridColumn>
+                <RadzenDataGridColumn TItem="OrderModel" Title="القسم">
+                    <Template Context="order">@order.Section?.Name</Template>
+                </RadzenDataGridColumn>
+                <RadzenDataGridColumn TItem="OrderModel" Property="LastDepartment" Title="آخر قسم" />
+                <RadzenDataGridColumn TItem="OrderModel" Property="RepeateFactor" Title="عامل التكرار" />
+                <RadzenDataGridColumn TItem="OrderModel" Title="الحالة">
+                    <Template Context="order">
+                        @if (order.Closed == true)
+                        {
+                            <span class="badge bg-danger"><i class="bi bi-lock-fill me-1"></i> مغلق</span>
+                        }
+                        else
+                        {
+                            <span class="badge bg-success"><i class="bi bi-unlock-fill me-1"></i> مفتوح</span>
+                        }
+                    </Template>
+                </RadzenDataGridColumn>
+
+                <RadzenDataGridColumn TItem="OrderModel" Title="الإجراءات" Width="200px">
+                    <Template Context="order">
+                        <div class="d-flex align-items-center gap-2 flex-wrap">
+                            <RadzenButton Icon="info" ButtonStyle="ButtonStyle.Info"
+                                          Click="@(() => ShowDetails(order))"
+                                          Disabled="!CanView"
+                                          Tooltip="عرض التفاصيل" />
+
+                            <RadzenButton Icon="attach_file" ButtonStyle="ButtonStyle.Warning"
+                                          Click="@(() => ShowAttachments(order))"
+                                          Disabled="!CanView"
+                                          Tooltip="المرفقات" />
+
+                            <RadzenButton Icon="add_circle"
+                                          ButtonStyle="@(order.Closed == true || !CanAdd ? ButtonStyle.Secondary : ButtonStyle.Success)"
+                                          Style="@(order.Closed == true || !CanAdd ? "cursor: not-allowed;" : null)"
+                                          Click="@(() => AddDetail(order))"
+                                          Disabled="@(order.Closed == true || !CanAdd)"
+                                          Tooltip="إضافة تفصيلة" />
+                        </div>
+                    </Template>
+                </RadzenDataGridColumn>
+            </Columns>
+
+            <Template Context="order">
+                @if (order.OrderDetails?.Any() == true)
+                {
+                    <RadzenDataGrid TItem="OrderDetailModel"
+                                    Data="@order.OrderDetails"
+                                    AllowPaging="false"
+                                    ShowPagingSummary="false"
+                                    Class="table table-sm table-bordered table-striped mt-2">
+                        <Columns>
+                            <RadzenDataGridColumn TItem="OrderDetailModel" Property="FromDep" Title="من قسم" />
+                            <RadzenDataGridColumn TItem="OrderDetailModel" Property="ToDepartment" Title="إلى قسم" />
+                            <RadzenDataGridColumn TItem="OrderDetailModel" Property="Amount" Title="المبلغ" />
+                            <RadzenDataGridColumn TItem="OrderDetailModel" Title="ملاحظات">
+                                <Template Context="detail">
+                                    <div style="display: flex; align-items: center;">
+                                        <div style="flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px;">
+                                            @if (string.IsNullOrWhiteSpace(detail.Notes))
+                                            {
+                                                <span class="text-muted">
+                                                    <i class="material-icons" style="font-size:16px; vertical-align: middle;">info</i>
+                                                    لا توجد ملاحظة
+                                                </span>
+                                            }
+                                            else
+                                            {
+                                                @detail.Notes
+                                            }
+                                        </div>
+
+                                        <div style="display: flex; align-items: center; justify-content: flex-start;">
+                                            @if (!string.IsNullOrWhiteSpace(detail.Notes))
+                                            {
+                                                <RadzenButton Icon="description"
+                                                              Size="Radzen.ButtonSize.Small"
+                                                              ButtonStyle="ButtonStyle.Light"
+                                                              Style="width: 36px; height: 36px; padding: 0; margin-left: auto;"
+                                                              Click="@(() => ShowNotes(detail.Notes))"
+                                                              class="note-icon-btn"
+                                                              Tooltip="عرض الملاحظة"
+                                                              title="عرض الملاحظة" />
+                                            }
+                                        </div>
+                                    </div>
+                                </Template>
+                            </RadzenDataGridColumn>
+
+                            <RadzenDataGridColumn TItem="OrderDetailModel" Title="يحتاج موافقة">
+                                <Template Context="detail">@((detail.NeedApproval ? "نعم" : "لا"))</Template>
+                            </RadzenDataGridColumn>
+                            <RadzenDataGridColumn TItem="OrderDetailModel" Property="CreatedBy" Title="بواسطة" />
+                            <RadzenDataGridColumn TItem="OrderDetailModel" Title="تاريخ الإنشاء">
+                                <Template Context="detail">@detail.CreationDate.ToString("yyyy/MM/dd HH:mm")</Template>
+                            </RadzenDataGridColumn>
+                        </Columns>
+                    </RadzenDataGrid>
+
+                    <div class="text-end mt-2 text-primary fw-bold">
+                        المجموع: @order.OrderDetails.Sum(x => x.Amount) جنيه
+                    </div>
+                }
+                else
+                {
+                    <div class="p-2 text-muted">لا توجد تفاصيل لهذا الطلب</div>
+                }
+            </Template>
+        </RadzenDataGrid>
+    }
+</div>
+
+<style>
+    .note-icon-btn {
+        border-radius: 50% !important;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+        transition: background-color 0.2s ease-in-out, transform 0.2s;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+        .note-icon-btn:hover {
+            background-color: #e3f2fd !important;
+            transform: scale(1.1);
+        }
+
+        .note-icon-btn .rz-button-icon {
+            font-size: 18px !important;
+            color: #1976d2;
+        }
+</style>
+
+@code {
+    private List<OrderModel> orders = new();
+    private int? sectionId;
+    bool isAuthenticated = false;
+
+    // صلاحيات
+    private bool CanView = false;
+    private bool CanAdd = false;
+    private bool CanEdit = false;
+    private bool CanDelete = false;
+
+    void ShowNotes(string notes)
+    {
+        DialogService.Open("ملاحظات",
+        ds => @<div style="padding:20px; white-space:pre-wrap">@notes</div>,
+    new DialogOptions() { Width = "600px", Height = "auto", CloseDialogOnOverlayClick = true });
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        isAuthenticated = user.Identity != null && user.Identity.IsAuthenticated;
+
+        if (!isAuthenticated)
+            return;
+
+        var userId = UserManager.GetUserId(user);
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            await DialogService.Alert("تعذر الحصول على بيانات المستخدم", "خطأ");
+            return;
+        }
+
+        await LoadPermissions(user);
+
+        if (!CanView)
+        {
+            NavigationManager.NavigateTo("/Account/AccessDenied");
+            return;
+        }
+
+        await using var db = await ContextFactory.CreateDbContextAsync();
+        sectionId = await db.UserSections
+            .Where(x => x.UserId == userId)
+            .Select(x => (int?)x.SectionId)
+            .FirstOrDefaultAsync();
+
+        if (sectionId == null)
+        {
+            await DialogService.Alert("المستخدم غير مرتبط بأي قسم", "خطأ");
+            return;
+        }
+
+        orders = await OrderService.GetAllAsync(sectionId.Value);
+    }
+
+    private async Task LoadPermissions(ClaimsPrincipal user)
+    {
+        var roles = user.Claims
+            .Where(c => c.Type == System.Security.Claims.ClaimTypes.Role)
+            .Select(c => c.Value)
+            .ToList();
+
+        var permissions = (await Task.WhenAll(roles.Select(r => RoleService.GetPermissionsByRoleAsync(r))))
+            .SelectMany(p => p)
+            .Distinct()
+            .ToList();
+
+        CanView = permissions.Contains("Permissions.orders.View");
+        CanAdd = permissions.Contains("Permissions.orders.Add");
+        CanEdit = permissions.Contains("Permissions.orders.Edit");
+        CanDelete = permissions.Contains("Permissions.orders.Delete");
+    }
+
+    async Task AddDetail(OrderModel order)
+    {
+        if (!CanAdd || (order.Closed ?? false))
+            return;
+
+        var result = await DialogService.OpenAsync<OrderDetailForm>(
+            "إضافة تفصيلة",
+            new Dictionary<string, object>
+                {
+                    ["detail"] = new OrderDetail
+                    {
+                        OrderId = order.Id,
+                        CreatedBy = order.CreatedBy,
+                        CreationDate = DateTime.Now,
+                        PcName = order.PcName,
+                        FromDep = order.Section.Name
+                    },
+                    ["sectionId"] = order.SectionId
+                },
+            new DialogOptions { Width = "950px", Resizable = true });
+
+        if (result is OrderDetail)
+        {
+            var updatedOrder = await OrderService.GetByIdAsync(order.Id);
+            if (updatedOrder != null)
+            {
+                order.OrderDetails = updatedOrder.OrderDetails ?? new List<OrderDetail>();
+                order.LastDepartment = updatedOrder.LastDepartment ?? order.LastDepartment;
+                order.DateTime = updatedOrder.DateTime ?? order.DateTime;
+                StateHasChanged();
+            }
+        }
+    }
+
+    void ShowDetails(OrderModel order)
+    {
+        DialogService.Open<OrderDetailsDialog>("تفاصيل الطلب",
+            new Dictionary<string, object> { ["OrderId"] = order.Id },
+            new DialogOptions { Width = "950px", Resizable = true });
+    }
+
+    async Task ShowAttachments(OrderModel order)
+    {
+        var attachments = order.OrderDetails?
+            .Where(x => !string.IsNullOrWhiteSpace(x.Attachment))
+            .SelectMany(x => x.Attachment.Split(',', StringSplitOptions.RemoveEmptyEntries))
+            .Distinct()
+            .ToList();
+
+        var attachmentString = (attachments?.Any() ?? false)
+            ? string.Join(",", attachments!)
+            : "";
+
+        await DialogService.OpenAsync<OrderAttachmentsDialog>(
+            "المرفقات",
+            new Dictionary<string, object> { ["AttachmentString"] = attachmentString },
+            new DialogOptions { Width = "700px", Resizable = true });
+    }
+
+    private async Task ReloadOrders()
+    {
+        if (sectionId != null)
+        {
+            orders = await OrderService.GetAllAsync(sectionId.Value);
+            StateHasChanged();
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _ = PeriodicRefresh();
+        }
+    }
+
+    private async Task PeriodicRefresh()
+    {
+        while (true)
+        {
+            await Task.Delay(TimeSpan.FromMinutes(1));
+            await ReloadOrders();
+        }
+    }
+
+    private async Task ExportWithDetails()
+    {
+        var bytes = ExportService.ExportOrdersWithDetailsToExcel(orders);
+        var fileName = $"الطلبات_بتفاصيل_{DateTime.Now:yyyyMMddHHmmss}.xlsx";
+        var exportFolder = Path.Combine(Env.WebRootPath, "exports");
+
+        if (!Directory.Exists(exportFolder))
+            Directory.CreateDirectory(exportFolder);
+
+        var filePath = Path.Combine(exportFolder, fileName);
+        await File.WriteAllBytesAsync(filePath, bytes);
+
+        var downloadUrl = $"exports/{fileName}";
+        await JS.InvokeVoidAsync("open", downloadUrl, "_blank");
+    }
+}
+<script>
+    function updateSection(text) {
+        var el = document.getElementById("sectionTitle");
+        if (el) {
+            el.innerText = text;
+        } else {
+            console.warn("⚠️ updateSection: العنصر sectionTitle غير موجود في الصفحة.");
+        }
+    }
+</script>

@@ -1,0 +1,99 @@
+﻿@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Components.Forms
+@using Radzen
+@using Radzen.Blazor
+@using TicketSystem.TSModel
+@inject DialogService DialogService
+
+<EditForm Model="EditItem" OnValidSubmit="HandleValidSubmit">
+    <DataAnnotationsValidator />
+    <ValidationSummary />
+
+    <div class="row g-3">
+        <div class="col-md-3">
+            <RadzenNumeric @bind-Value="EditItem.Types" Style="width: 100%" Name="Types" Placeholder="ادخل الرقم" />
+            <ValidationMessage For="@(() => EditItem.Types)" />
+        </div>
+
+        <div class="col-md-3">
+            <RadzenDropDown @bind-Value="EditItem.Level1" Data="@Sections" TextProperty="Name" ValueProperty="Name" Placeholder="-- اختر قسم --" Style="width: 100%" Name="Level1" />
+            <ValidationMessage For="@(() => EditItem.Level1)" />
+        </div>
+
+        <div class="col-md-3">
+            <RadzenTextBox @bind-Value="EditItem.Level2" Placeholder="ادخل Level2" Style="width: 100%" Name="Level2"
+                           Disabled="@string.IsNullOrWhiteSpace(EditItem.Level1)" />
+            <ValidationMessage For="@(() => EditItem.Level2)" />
+        </div>
+
+        <div class="col-md-3">
+            <RadzenTextBox @bind-Value="EditItem.Level3" Placeholder="ادخل Level3" Style="width: 100%" Name="Level3"
+                           Disabled="@string.IsNullOrWhiteSpace(EditItem.Level2)" />
+        </div>
+    </div>
+
+    <div class="row g-3 mt-2">
+        <div class="col-md-3">
+            <RadzenTextBox @bind-Value="EditItem.Level4" Placeholder="ادخل Level4" Style="width: 100%" Name="Level4"
+                           Disabled="@string.IsNullOrWhiteSpace(EditItem.Level3)" />
+        </div>
+        <div class="col-md-3">
+            <RadzenTextBox @bind-Value="EditItem.Level5" Placeholder="ادخل Level5" Style="width: 100%" Name="Level5"
+                           Disabled="@string.IsNullOrWhiteSpace(EditItem.Level4)" />
+        </div>
+        <div class="col-md-3">
+            <RadzenTextBox @bind-Value="EditItem.Level6" Placeholder="ادخل Level6" Style="width: 100%" Name="Level6"
+                           Disabled="@string.IsNullOrWhiteSpace(EditItem.Level5)" />
+        </div>
+        <div class="col-md-3">
+            <RadzenTextBox @bind-Value="EditItem.Label" Placeholder="ادخل Label" Style="width: 100%" Name="Label" />
+        </div>
+    </div>
+
+
+    <div class="row g-3 mt-2">
+        <div class="col-md-4">
+            <RadzenTextBox @bind-Value="EditItem.WorkFlow" Placeholder="ادخل WorkFlow" Style="width: 100%" Name="WorkFlow" />
+        </div>
+        <div class="col-md-4">
+            <RadzenTextBox @bind-Value="EditItem.Okm" Placeholder="ادخل Okm" Style="width: 100%" Name="Okm" />
+        </div>
+        <div class="col-md-4">
+            <RadzenTextBox Disabled="true" Value="@(EditItem.CreatedBy)" Style="width: 100%" Name="CreatedBy" />
+        </div>
+    </div>
+
+    <div class="mt-3">
+        <label>تاريخ الإنشاء</label>
+        <RadzenTextBox Disabled="true" Value="@(EditItem.CreationDate.ToString("yyyy-MM-dd"))" Style="width: 100%" />
+    </div>
+
+    <div class="mt-4 d-flex justify-content-end gap-2">
+        <RadzenButton ButtonType="ButtonType.Submit" Text="حفظ" Icon="check_circle_outline" Style="margin-right: 10px" Disabled="@isSaving" />
+        <RadzenButton Text="إلغاء" Icon="cancel" ButtonStyle="ButtonStyle.Secondary" Click="Cancel" />
+    </div>
+</EditForm>
+
+@code {
+    [Parameter]
+    public OrderFixed EditItem { get; set; } = new();
+
+    [Parameter]
+    public List<Section> Sections { get; set; } = new();
+
+    bool isSaving = false;
+
+    void HandleValidSubmit()
+    {
+        isSaving = true;
+        // إذا تريد تنفيذ عمليات إضافية هنا، ضفها
+
+        // إغلاق المودال مع إرجاع القيمة إلى الصفحة الأب
+        DialogService.Close(EditItem);
+    }
+
+    void Cancel()
+    {
+        DialogService.Close(null);
+    }
+}

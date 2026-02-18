@@ -1,0 +1,205 @@
+﻿@* =============OrderDetailForOrder============= *@
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.AspNetCore.Components.Web
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.JSInterop
+@using System.IO
+@using Radzen
+@using Radzen.Blazor
+@using TicketSystem.Data
+@using TicketSystem.Services
+@using TicketSystem.TSModel
+
+@inject AuthenticationStateProvider AuthStateProvider
+@inject UserManager<ApplicationUser> UserManager
+@inject IWebHostEnvironment Env
+@inject IJSRuntime JS
+@inject DialogService DialogService
+@inject SectionService SectionService
+@using FileInfo = System.IO.FileInfo
+
+<EditForm Model="@detail" OnValidSubmit="HandleValidSubmit">
+    <DataAnnotationsValidator />
+    <ValidationSummary />
+
+    <div class="row">
+        <div class="col-md-6 mb-3">
+            <RadzenLabel Text="من قسم" />
+            <RadzenDropDown @bind-Value="detail.FromDep"
+                            Data="@userSections"
+                            TextProperty="Name"
+                            ValueProperty="Name"
+                            Style="width:100%" Placeholder="اختر القسم"
+                            Disabled="@IsEdit" />
+        </div>
+
+        <div class="col-md-6 mb-3">
+            <RadzenLabel Text="إلى قسم" />
+            <RadzenDropDown @bind-Value="detail.ToDepartment"
+                            Data="@allSections"
+                            TextProperty="Name"
+                            ValueProperty="Name"
+                            Style="width:100%" Placeholder="اختر القسم"
+                            Disabled="@IsEdit" />
+        </div>
+
+        <div class="col-md-12 mb-3">
+            <RadzenLabel Text="ملاحظات" />
+            <RadzenTextArea @bind-Value="detail.Notes"
+                            Rows="2"
+                            Style="width:100%" />
+        </div>
+
+        <div class="col-md-6 mb-3">
+            <RadzenLabel Text="المبلغ" />
+            <RadzenNumeric @bind-Value="detail.Amount"
+                           Style="width:100%" />
+        </div>
+
+        <div class="col-md-6 mb-3 d-flex align-items-center mt-4">
+            <InputCheckbox class="form-check-input" @bind-Value="detail.NeedApproval" />
+            <label class="form-check-label ms-2">يحتاج موافقة</label>
+        </div>
+
+        <div class="col-md-12 mb-3">
+            <RadzenLabel Text="المرفقات" />
+            <InputFile OnChange="HandleFilesSelected" multiple />
+            <small class="text-muted">الصيغ المسموحة: PDF, JPG, PNG, DOCX (الحد الأقصى: 10MB)</small>
+        </div>
+    </div>
+
+    @if (attachments.Any())
+    {
+        <ul class="list-group mt-3">
+            @foreach (var file in attachments)
+            {
+                var path = Path.Combine(Env.WebRootPath, "uploads", file);
+                var ext = Path.GetExtension(file).ToLower();
+                var sizeKB = File.Exists(path) ? (new FileInfo(path).Length / 1024.0).ToString("0.##") : "؟";
+
+                <li class="list-group-item d-flex justify-content-between align-items-center">
+                    <div>
+                        <i class="fas fa-file me-2"></i>
+                        <span>@file</span>
+                        <span class="text-muted">(@ext, @sizeKB KB)</span>
+                    </div>
+                    <div class="btn-group">
+                        <RadzenButton Icon="visibility" Text="عرض" Class="btn btn-outline-primary btn-sm"
+                                      Click="@(async args => await ViewAttachment(file))" />
+                        <RadzenButton Icon="download" Text="تحميل" Class="btn btn-outline-success btn-sm ms-2"
+                                      Click="@(async args => await DownloadAttachment(file))" />
+                        <RadzenButton Icon="delete" Text="حذف" Class="btn btn-outline-danger btn-sm ms-2"
+                                      Click="@(args => DeleteAttachment(file))" />
+                    </div>
+                </li>
+            }
+        </ul>
+    }
+
+    <div class="mt-4 d-flex justify-content-end">
+        <RadzenButton Text="حفظ" Icon="save" ButtonType="ButtonType.Submit"
+                      ButtonStyle="ButtonStyle.Success" Style="margin-left:5px" />
+        <RadzenButton Text="إلغاء" Icon="cancel" ButtonStyle="ButtonStyle.Secondary"
+                      Click="@OnCancelClicked" />
+    </div>
+</EditForm>
+
+@code {
+    [Parameter] public OrderDetail detail { get; set; } = new();
+    [Parameter] public int? SectionId { get; set; }
+    [Parameter] public bool IsEdit { get; set; } = false;
+
+    List<Section> userSections = new(); // من قسم
+    List<Section> allSections = new();  // إلى قسم
+    List<string> attachments = new();
+
+    void OnCancelClicked(MouseEventArgs args)
+    {
+        DialogService.Close(false);
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        detail.CreationDate = DateTime.Now;
+        detail.PcName = Environment.MachineName;
+
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = await UserManager.GetUserAsync(authState.User);
+
+        if (user != null)
+        {
+            userSections = await SectionService.GetSectionsForUserAsync(user.Id);
+        }
+
+        allSections = await SectionService.GetAllAsync();
+
+        if (!string.IsNullOrWhiteSpace(detail.Attachment))
+        {
+            attachments = detail.Attachment.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList();
+        }
+    }
+
+    async Task HandleFilesSelected(InputFileChangeEventArgs e)
+    {
+        var allowed = new[] { ".pdf", ".jpg", ".jpeg", ".png", ".docx" };
+        var uploadDir = Path.Combine(Env.WebRootPath, "uploads");
+
+        if (!Directory.Exists(uploadDir))
+            Directory.CreateDirectory(uploadDir);
+
+        foreach (var file in e.GetMultipleFiles())
+        {
+            var ext = Path.GetExtension(file.Name).ToLower();
+
+            if (!allowed.Contains(ext))
+            {
+                await DialogService.Alert($"نوع الملف غير مسموح: {file.Name}");
+                continue;
+            }
+
+            if (file.Size > 10 * 1024 * 1024)
+            {
+                await DialogService.Alert($"الملف كبير جدًا: {file.Name}");
+                continue;
+            }
+
+            var uniqueName = $"{Guid.NewGuid().ToString().Substring(0, 8)}_{file.Name}";
+            var filePath = Path.Combine(uploadDir, uniqueName);
+
+            await using var stream = File.Create(filePath);
+            await file.OpenReadStream(10 * 1024 * 1024).CopyToAsync(stream);
+
+            attachments.Add(uniqueName);
+        }
+    }
+
+    async Task ViewAttachment(string file)
+    {
+        await JS.InvokeVoidAsync("window.open", $"/uploads/{file}", "_blank");
+    }
+
+    async Task DownloadAttachment(string file)
+    {
+        await JS.InvokeVoidAsync("window.open", $"/uploads/{file}", "_self");
+    }
+
+    void DeleteAttachment(string file)
+    {
+        var path = Path.Combine(Env.WebRootPath, "uploads", file);
+        if (File.Exists(path))
+        {
+            try { File.Delete(path); } catch { }
+        }
+
+        attachments.Remove(file);
+    }
+
+    Task HandleValidSubmit()
+    {
+        detail.Attachment = string.Join(",", attachments);
+        DialogService.Close(detail);
+        return Task.CompletedTask;
+    }
+
+}

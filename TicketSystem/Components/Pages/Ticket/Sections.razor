@@ -1,0 +1,480 @@
+﻿@page "/sections"
+@inject SectionService SectionService
+@inject IJSRuntime JS
+@rendermode InteractiveServer
+@using System.Globalization;
+@inject IAuthorizationService AuthorizationService
+@inject AuthenticationStateProvider AuthProvider
+@inject RoleService RoleService
+@using Microsoft.AspNetCore.Authorization
+@using TicketSystem.TSModel.Permission
+@using System.Security.Claims
+
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css" />
+
+<style>
+    .white-card {
+        background-color: white;
+        border-radius: 0.75rem;
+        box-shadow: 0 0 15px rgba(0,0,0,0.05);
+        padding: 2rem;
+    }
+
+    .table th, .table td {
+        vertical-align: middle !important;
+    }
+
+    .btn-primary {
+        background-color: #4a7ff3;
+        border-color: #4a7ff3;
+    }
+
+        .btn-primary:hover {
+            background-color: #3a6fe0;
+        }
+
+    .btn-warning {
+        background-color: #ffc107;
+        color: #212529;
+        border: none;
+    }
+
+    .btn-danger {
+        background-color: #dc3545;
+        border: none;
+    }
+
+    .form-control:focus {
+        box-shadow: 0 0 0 0.15rem rgba(74, 127, 243, 0.25);
+        border-color: #4a7ff3;
+    }
+
+    .modal-content {
+        border-radius: 0.75rem;
+    }
+
+    .modal-header {
+        background-color: #f8f9fa;
+        border-bottom: 1px solid #dee2e6;
+    }
+
+    .modal-title {
+        font-weight: bold;
+        color: #333;
+    }
+
+    .alert-success, .alert-danger {
+        border-radius: 0.5rem;
+    }
+
+    .form-label {
+        font-weight: 500;
+    }
+
+    .form-control:focus {
+        box-shadow: 0 0 0 0.2rem rgba(74, 127, 243, 0.3);
+        border-color: #4a7ff3;
+    }
+
+</style>
+
+<div class="container mt-4">
+    <div class="white-card">
+
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <div class="d-flex align-items-center gap-2">
+                <i class="bi bi-diagram-3-fill text-primary" style="font-size: 1.8rem;"></i>
+                <h3 class="mb-0 fw-bold">إدارة الأقسام</h3>
+            </div>
+
+            @if (CanAdd)
+            {
+                <button class="btn btn-primary shadow-sm" @onclick="ShowAddModal">
+                    <i class="bi bi-plus-circle me-1"></i> إضافة قسم
+                </button>
+            }
+
+           
+
+        </div>
+
+        @if (!string.IsNullOrEmpty(SuccessMessage))
+        {
+            <div class="alert alert-success alert-dismissible fade show animate__animated animate__fadeIn" role="alert">
+                <i class="bi bi-check-circle me-2"></i> @SuccessMessage
+                <button type="button" class="btn-close" @onclick="() => SuccessMessage = null" aria-label="إغلاق"></button>
+            </div>
+        }
+
+        @if (!string.IsNullOrEmpty(ErrorMessage))
+        {
+            <div class="alert alert-danger alert-dismissible fade show animate__animated animate__fadeIn" role="alert">
+                <i class="bi bi-exclamation-triangle me-2"></i> @ErrorMessage
+                <button type="button" class="btn-close" @onclick="() => ErrorMessage = null" aria-label="إغلاق"></button>
+            </div>
+        }
+
+        <div class="mb-3">
+            <input class="form-control" placeholder="ابحث باسم القسم..." @oninput="OnSearchInput" />
+        </div>
+
+        <div class="table-responsive">
+            <table class="table table-bordered table-hover text-center align-middle">
+                <thead class="table-light">
+                    <tr>
+                        <th style="width: 10%;">#</th>
+                        <th>الاسم</th>
+                        <th style="width: 20%;">إجراءات</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @for (int i = 0; i < FilteredItems.Count; i++)
+                    {
+                        var item = FilteredItems[i];
+                        <tr>
+                            <td>@(i + 1)</td>
+                            <td>@item.Name</td>
+                            <td>
+
+                                @if (CanEdit)
+                                {
+                                    <button class="btn btn-sm btn-warning me-1" title="تعديل" @onclick="() => Edit(item)">
+                                        <i class="bi bi-pencil-square"></i>
+                                    </button>
+                                }
+
+                                @if (CanDelete)
+                                {
+                                    <button class="btn btn-sm btn-danger" title="حذف" @onclick="() => Delete(item.Id)">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                }
+                                
+                            </td>
+
+
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+    </div>
+</div>
+
+@if (ShowModal)
+{
+    <div class="modal show d-block" tabindex="-1" style="background-color:rgba(0,0,0,0.5)">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content shadow">
+                <div class="modal-header d-flex justify-content-between align-items-center">
+                    <h5 class="modal-title text-end flex-grow-1" dir="rtl">
+                        @(IsEdit ? "تعديل القسم" : "إضافة قسم جديد")
+                    </h5>
+                    <button type="button" class="btn-close ms-2" @onclick="CloseModal" aria-label="Close"></button>
+                </div>
+
+                <div class="modal-body">
+                    <EditForm Model="Model" OnValidSubmit="Save">
+                        <DataAnnotationsValidator />
+                        <ValidationSummary />
+
+                        <div class="mb-3">
+                            <label class="form-label">اسم القسم</label>
+                            <input class="form-control" @bind="Model.Name" @ref="NameInputRef" />
+                            <ValidationMessage For="@(() => Model.Name)" />
+                            @if (!string.IsNullOrEmpty(InlineErrorMessage))
+                            {
+                                <div class="text-danger mt-1"><i class="bi bi-exclamation-circle me-1"></i> @InlineErrorMessage</div>
+                            }
+                        </div>
+
+                        <div class="text-end">
+                            <button type="submit" class="btn btn-success ms-2" disabled="@IsSaving">
+                                @if (IsSaving)
+                                {
+                                    <span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true">
+                                        جارٍ الحفظ...
+
+                                    </span>
+                                        }
+                                else
+                                {
+                                    <i class="bi bi-check-circle me-1">
+                                        حفظ
+
+                                    </i>
+                                            }
+                            </button>
+
+
+                            <button type="button" class="btn btn-secondary" @onclick="CloseModal">إلغاء</button>
+                        </div>
+
+                    </EditForm>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    List<Section> Items = new();
+    List<Section> FilteredItems = new();
+    Section Model = new();
+    bool ShowModal = false;
+    bool IsEdit = false;
+    string SearchTerm = "";
+    string? InlineErrorMessage = null;
+
+    string? SuccessMessage = null;
+    string? ErrorMessage = null;
+
+    ElementReference NameInputRef;
+
+    bool IsSaving = false;
+
+
+
+
+    @inject NavigationManager NavigationManager
+
+
+
+    private bool CanView = false;
+    private bool CanAdd = false;
+    private bool CanEdit = false;
+    private bool CanDelete = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+
+        // جلب كل الرولات الخاصة بالمستخدم
+        var roles = user.Claims
+                        .Where(c => c.Type == ClaimTypes.Role)
+                        .Select(c => c.Value)
+                        .ToList();
+
+        var allPermissions = new List<string>();
+
+        // تنفيذ كل استدعاء واحدًا تلو الآخر
+        foreach (var role in roles)
+        {
+            var perms = await RoleService.GetPermissionsByRoleAsync(role);
+            allPermissions.AddRange(perms);
+        }
+
+        var permissions = allPermissions.Distinct().ToList();
+
+        CanView = permissions.Contains("Permissions.Sections.View");
+        CanAdd = permissions.Contains("Permissions.Sections.Add");
+        CanEdit = permissions.Contains("Permissions.Sections.Edit");
+        CanDelete = permissions.Contains("Permissions.Sections.Delete");
+
+        if (!CanView)
+        {
+            NavigationManager.NavigateTo("/Account/AccessDenied");
+            return;
+        }
+
+        Items = await SectionService.GetAllAsync();
+        FilteredItems = Items;
+    }
+
+    private async Task RefreshPermissions()
+    {
+        var authState = await AuthProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+
+        var roles = user.Claims
+                        .Where(c => c.Type == ClaimTypes.Role)
+                        .Select(c => c.Value)
+                        .ToList();
+
+        var allPermissions = new List<string>();
+        foreach (var role in roles)
+        {
+            var perms = await RoleService.GetPermissionsByRoleAsync(role);
+            allPermissions.AddRange(perms);
+        }
+
+        var permissions = allPermissions.Distinct().ToList();
+
+        CanView = permissions.Contains("Permissions.Sections.View");
+        CanAdd = permissions.Contains("Permissions.Sections.Add");
+        CanEdit = permissions.Contains("Permissions.Sections.Edit");
+        CanDelete = permissions.Contains("Permissions.Sections.Delete");
+
+        StateHasChanged();
+    }
+
+
+    void ShowAddModal()
+    {
+        Model = new Section();
+        IsEdit = false;
+        ShowModal = true;
+        ClearMessages();
+        InvokeAsync(async () =>
+        {
+            await Task.Delay(100);
+            await NameInputRef.FocusAsync();
+        });
+    }
+
+    void Edit(Section item)
+    {
+        Model = new Section { Id = item.Id, Name = item.Name };
+        IsEdit = true;
+        ShowModal = true;
+        ClearMessages();
+        InvokeAsync(async () =>
+        {
+            await Task.Delay(100);
+            await NameInputRef.FocusAsync();
+        });
+    }
+
+    async Task Save()
+    {
+
+
+        IsSaving = true;
+        StateHasChanged(); 
+
+        ClearMessages();
+
+        try
+        {
+            if (string.IsNullOrWhiteSpace(Model.Name))
+            {
+                InlineErrorMessage = "اسم القسم مطلوب.";
+                return;
+            }
+
+            if (!IsEdit)
+            {
+                if (await SectionService.NameExistsAsync(Model.Name))
+                {
+                    InlineErrorMessage = "اسم القسم موجود مسبقاً.";
+                    return;
+                }
+
+                await SectionService.AddAsync(Model);
+                SuccessMessage = "تمت الإضافة بنجاح.";
+            }
+            else
+            {
+                if (await SectionService.IsNameUsedByAnotherAsync(Model.Id, Model.Name))
+                {
+                    InlineErrorMessage = "اسم القسم مستخدم من قبل قسم آخر.";
+                    return;
+                }
+
+                await SectionService.UpdateAsync(Model);
+                SuccessMessage = "تم التعديل بنجاح.";
+            }
+
+            ShowModal = false;
+            Items = await SectionService.GetAllAsync();
+            FilterItems();
+            StartClearSuccessTimer();
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"حدث خطأ أثناء الحفظ: {ex.Message}";
+            StartClearErrorTimer();
+        }
+
+        finally
+        {
+            IsSaving = false;
+            StateHasChanged();
+        }
+    }
+
+    async Task Delete(int id)
+    {
+
+        if (!await JS.InvokeAsync<bool>("confirm", "هل أنت متأكد من الحذف؟")) return;
+
+        try
+        {
+            await SectionService.DeleteAsync(id);
+            Items = await SectionService.GetAllAsync();
+            FilterItems();
+            SuccessMessage = "تم الحذف بنجاح.";
+            StartClearSuccessTimer();
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"فشل الحذف: {ex.Message}";
+            StartClearErrorTimer();
+        }
+    }
+
+    async Task OnSearchInput(ChangeEventArgs e)
+    {
+        SearchTerm = e.Value?.ToString() ?? "";
+        FilterItems();
+    }
+
+    void FilterItems()
+    {
+        if (string.IsNullOrWhiteSpace(SearchTerm))
+        {
+            FilteredItems = Items;
+        }
+        else
+        {
+            var culture = new CultureInfo("ar-EG");
+            var term = SearchTerm.ToLower(culture);
+
+            FilteredItems = Items
+                .Where(s => !string.IsNullOrEmpty(s.Name) &&
+                            s.Name.ToLower(culture).Contains(term))
+                .ToList();
+        }
+    }
+
+
+
+    void CloseModal()
+    {
+        ShowModal = false;
+        ClearMessages();
+        StateHasChanged(); 
+    }
+
+
+    void ClearMessages()
+    {
+        ErrorMessage = null;
+        SuccessMessage = null;
+        InlineErrorMessage = null;
+    }
+
+    void StartClearSuccessTimer()
+    {
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(4000);
+            SuccessMessage = null;
+            await InvokeAsync(StateHasChanged);
+        });
+    }
+
+    void StartClearErrorTimer()
+    {
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(5000);
+            ErrorMessage = null;
+            await InvokeAsync(StateHasChanged);
+        });
+    }
+}

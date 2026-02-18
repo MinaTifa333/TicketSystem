@@ -1,0 +1,227 @@
+﻿@page "/my-profile"
+@using Microsoft.AspNetCore.Identity
+@using System.ComponentModel.DataAnnotations
+@using TicketSystem.Data
+@using Microsoft.AspNetCore.Components.Authorization
+@inject UserManager<ApplicationUser> UserManager
+@inject SignInManager<ApplicationUser> SignInManager
+@inject NavigationManager NavigationManager
+@inject ILogger<MyProfile> Logger
+@inject AuthenticationStateProvider AuthStateProvider
+@rendermode InteractiveServer
+
+<style>
+    body {
+        background: #f8f9fa;
+    }
+
+    .profile-card {
+        max-width: 500px;
+        margin: auto;
+        margin-top: 60px;
+        border-radius: 16px;
+        overflow: hidden;
+        border: none;
+    }
+
+    .profile-header {
+        background: linear-gradient(45deg, #0d6efd, #3c8dbc);
+        color: white;
+        padding: 25px 20px;
+    }
+
+    .form-label i {
+        margin-right: 6px;
+        color: #0d6efd;
+    }
+
+    .form-control:focus {
+        border-color: #0d6efd;
+        box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
+    }
+
+    .btn-primary {
+        font-weight: bold;
+    }
+
+    .toast {
+        animation: fadeIn 0.5s ease-in-out;
+        box-shadow: 0 0.25rem 0.75rem rgba(0,0,0,.1);
+        border-radius: 8px;
+    }
+
+    @@keyframes fadeIn {
+        from {
+            opacity: 0;
+            transform: translateY(-20px);
+        }
+
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+</style>
+
+<!-- Toast Notifications -->
+<div class="position-fixed top-0 end-0 p-3" style="z-index: 1080;">
+    @if (!string.IsNullOrEmpty(successMessage))
+    {
+        <div class="toast align-items-center text-white bg-success show mb-2" role="alert">
+            <div class="d-flex">
+                <div class="toast-body">✅ @successMessage</div>
+                <button type="button" class="btn-close btn-close-white me-2 m-auto" @onclick="() => successMessage = null"></button>
+            </div>
+        </div>
+    }
+    @if (!string.IsNullOrEmpty(errorMessage))
+    {
+        <div class="toast align-items-center text-white bg-danger show" role="alert">
+            <div class="d-flex">
+                <div class="toast-body">❌ @errorMessage</div>
+                <button type="button" class="btn-close btn-close-white me-2 m-auto" @onclick="() => errorMessage = null"></button>
+            </div>
+        </div>
+    }
+</div>
+
+@if (isLoading)
+{
+    <div class="text-center mt-5">
+        <div class="spinner-border text-primary" role="status"></div>
+        <p class="mt-3">⏳ جاري تحميل الملف الشخصي...</p>
+    </div>
+}
+else
+{
+    <div class="card shadow profile-card">
+        <div class="profile-header text-center">
+            <h4><i class="fas fa-user-circle me-2"></i> الملف الشخصي</h4>
+        </div>
+        <div class="card-body bg-white">
+            <EditForm Model="@model" OnValidSubmit="HandleSubmit">
+                <DataAnnotationsValidator />
+                <ValidationSummary />
+
+                <div class="mb-3">
+                    <label class="form-label fw-bold">
+                        <i class="fas fa-envelope"></i> البريد الإلكتروني
+                    </label>
+                    <InputText class="form-control" @bind-Value="model.Email" disabled />
+                </div>
+
+
+                <div class="mb-3">
+                    <label class="form-label fw-bold"><i class="fas fa-user"></i> اسم المستخدم</label>
+                    <InputText class="form-control" @bind-Value="model.UserName" />
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label fw-bold"><i class="fas fa-lock"></i> كلمة المرور الجديدة</label>
+                    <InputText class="form-control" @bind-Value="model.NewPassword" type="password" />
+                    <div class="form-text text-muted">اتركها فارغة إذا لم ترغب في تغيير كلمة المرور</div>
+                </div>
+
+                <button class="btn btn-primary w-100" type="submit" disabled="@isSubmitting">
+                    @(isSubmitting ? "⏳ جاري الحفظ..." : "💾 حفظ التعديلات")
+                </button>
+            </EditForm>
+        </div>
+    </div>
+}
+
+
+@code {
+    private MyProfileModel model = new();
+    private string? successMessage;
+    private string? errorMessage;
+    private bool isSubmitting = false;
+    private bool isLoading = true;
+    private ApplicationUser? currentUser;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var userPrincipal = authState.User;
+
+            if (userPrincipal?.Identity is null || !userPrincipal.Identity.IsAuthenticated)
+            {
+                NavigationManager.NavigateTo("/Account/Login", forceLoad: true);
+                return;
+            }
+
+            currentUser = await UserManager.GetUserAsync(userPrincipal);
+
+            if (currentUser == null)
+            {
+                NavigationManager.NavigateTo("/Account/Login", forceLoad: true);
+                return;
+            }
+
+            model.Email = currentUser.Email ?? string.Empty;
+            model.UserName = currentUser.UserName ?? string.Empty;
+            isLoading = false;
+
+            StateHasChanged();
+        }
+    }
+
+
+    private async Task HandleSubmit()
+    {
+        isSubmitting = true;
+        successMessage = errorMessage = null;
+
+        if (currentUser == null)
+        {
+            errorMessage = "⚠️ المستخدم غير موجود.";
+            isSubmitting = false;
+            return;
+        }
+
+        // تحديث البيانات
+        currentUser.Email = model.Email;
+        currentUser.UserName = model.UserName;
+        var updateResult = await UserManager.UpdateAsync(currentUser);
+
+        if (!updateResult.Succeeded)
+        {
+            errorMessage = string.Join(" | ", updateResult.Errors.Select(e => e.Description));
+            isSubmitting = false;
+            return;
+        }
+
+        // تغيير كلمة المرور إذا تم إدخالها
+        if (!string.IsNullOrWhiteSpace(model.NewPassword))
+        {
+            var resetToken = await UserManager.GeneratePasswordResetTokenAsync(currentUser);
+            var passResult = await UserManager.ResetPasswordAsync(currentUser, resetToken, model.NewPassword);
+
+            if (!passResult.Succeeded)
+            {
+                errorMessage = string.Join(" | ", passResult.Errors.Select(e => e.Description));
+                isSubmitting = false;
+                return;
+            }
+        }
+
+        successMessage = "✅ تم تحديث البيانات بنجاح.";
+        isSubmitting = false;
+    }
+
+    public class MyProfileModel
+    {
+        [Required(ErrorMessage = "الإيميل مطلوب")]
+        [EmailAddress(ErrorMessage = "بريد إلكتروني غير صالح")]
+        public string Email { get; set; } = string.Empty;
+
+        [Required(ErrorMessage = "اسم المستخدم مطلوب")]
+        public string UserName { get; set; } = string.Empty;
+
+        [MinLength(6, ErrorMessage = "كلمة المرور يجب أن تكون 6 حروف على الأقل")]
+        public string? NewPassword { get; set; }
+    }
+}
+}
